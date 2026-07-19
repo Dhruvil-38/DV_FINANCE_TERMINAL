@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DV Finance — Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ LOGIN SCREEN ============ -->
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="mark">DV</div>
+      <div>
+        <div class="name">DV FINANCE</div>
+        <div class="tag">CLIENT &amp; FIRM PORTAL</div>
+      </div>
+    </div>
+
+    <h1 class="login-title">Sign in</h1>
+    <p class="login-sub">Access your dashboard with your firm or client credentials.</p>
+
+    <div class="login-error" id="login-error"></div>
+
+    <form id="login-form">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="login-email" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn-primary" id="login-submit">Sign In</button>
+    </form>
+
+    <div class="demo-accounts">
+      <div class="label">Demo Accounts — Click to Autofill</div>
+      <div class="demo-grid">
+        <button class="demo-btn" data-email="admin@dvfinance.in" data-password="Admin@123"><b>Admin</b>Full access</button>
+        <button class="demo-btn" data-email="analyst@dvfinance.in" data-password="Analyst@123"><b>Analyst</b>Calls &amp; research</button>
+        <button class="demo-btn" data-email="staff@dvfinance.in" data-password="Staff@123"><b>Staff</b>Ops &amp; support</button>
+        <button class="demo-btn" data-email="client@dvfinance.in" data-password="Client@123"><b>Client</b>Portfolio view</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ APP SHELL ============ -->
+<div class="app-shell hidden" id="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">DV</div>
+      <div class="text">
+        <span class="name">DV FINANCE</span>
+        <span class="portal" id="portal-label">FIRM PORTAL</span>
+      </div>
+    </div>
+
+    <nav class="nav-list" id="nav-list">
+      <button class="nav-item is-active" data-panel="dashboard"><span class="ic">◧</span>Dashboard</button>
+      <button class="nav-item" data-panel="market"><span class="ic">⚡</span>Market Terminal</button>
+      <button class="nav-item" data-panel="news"><span class="ic">▤</span>News</button>
+      <button class="nav-item" data-panel="analytics"><span class="ic">◈</span>Analytics</button>
+      <div class="nav-divider" data-firm-only>Firm Operations</div>
+      <button class="nav-item" data-panel="clients" data-firm-only><span class="ic">◍</span>Clients</button>
+      <button class="nav-item" data-panel="research"><span class="ic">✎</span>Research Notes</button>
+      <button class="nav-item" data-panel="tasks" data-firm-only><span class="ic">☑</span>Tasks</button>
+      <button class="nav-item" data-panel="documents"><span class="ic">▥</span>Documents</button>
+    </nav>
+
+    <div class="sidebar-user">
+      <div class="user-avatar" id="user-avatar">--</div>
+      <div class="user-meta">
+        <div class="user-name" id="user-name">—</div>
+        <div class="user-role" id="user-role">—</div>
+      </div>
+      <button class="logout-btn" id="logout-btn">Exit</button>
+    </div>
+  </aside>
+
+  <div class="main-col">
+
+    <header class="topbar">
+      <div class="topbar-search">
+        <span>⌕</span>
+        <input type="text" id="global-search" placeholder="Search symbols, clients, notes…">
+      </div>
+      <div class="topbar-right">
+        <span class="env-badge">DEMO DATA</span>
+        <button class="bell-btn" id="bell-btn">🔔<span class="bell-dot" id="bell-dot"></span></button>
+        <div class="user-avatar" id="topbar-avatar" style="cursor:default">--</div>
+      </div>
+      <div class="notif-dropdown hidden" id="notif-dropdown">
+        <div class="notif-head">Notifications</div>
+        <div id="notif-list"></div>
+      </div>
+    </header>
+
+    <main class="panels">
+
+      <!-- ============ DASHBOARD ============ -->
+      <section class="panel is-active" data-panel="dashboard">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title" id="dash-greeting">Dashboard</h1>
+            <p class="panel-sub">Live summary, call performance, and recent activity</p>
+          </div>
+          <button class="btn-ghost" data-refresh="dashboard">⟳ Refresh</button>
+        </header>
+
+        <div class="grid grid-4" id="summary-cards"></div>
+
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-label">Call Performance — 30D Cumulative</div>
+            <div class="chart-wrap" id="call-perf-chart"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Notifications</div>
+            <div class="kv-list" id="dash-notifications"></div>
+          </div>
+        </div>
+
+        <div class="card card-wide">
+          <div class="card-label">Recent Updates</div>
+          <div id="recent-updates"></div>
+        </div>
+      </section>
+
+      <!-- ============ MARKET TERMINAL ============ -->
+      <section class="panel" data-panel="market">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">Market Terminal</h1>
+            <p class="panel-sub">Watchlist &amp; trade calls — entry, stop loss, target, status</p>
+          </div>
+          <div class="panel-actions">
+            <button class="btn-outline accent" data-firm-only id="btn-add-watchlist">+ Watchlist</button>
+            <button class="btn-solid" data-firm-only id="btn-add-call">+ Trade Call</button>
+          </div>
+        </header>
+
+        <div class="card card-wide" style="margin-bottom:16px;">
+          <div class="card-label">Watchlist</div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Symbol</th><th>Sector</th><th>Last Price</th><th>Day Δ%</th><th>Added By</th><th data-firm-only></th></tr></thead>
+              <tbody id="watchlist-body"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card card-wide">
+          <div class="card-label">Trade Calls</div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Symbol</th><th>Sector</th><th>Dir</th><th>Entry</th><th>Stop Loss</th><th>Target</th><th>Status</th><th>Result</th><th>Notes</th><th data-firm-only>Update</th></tr></thead>
+              <tbody id="calls-body"><tr><td colspan="10" class="empty-state">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ NEWS ============ -->
+      <section class="panel" data-panel="news">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">News</h1>
+            <p class="panel-sub">Market news, company news &amp; firm announcements</p>
+          </div>
+          <button class="btn-solid" data-firm-only id="btn-add-news">+ Post Update</button>
+        </header>
+
+        <div class="tabs" id="news-tabs">
+          <button class="tab-btn is-active" data-cat="">All</button>
+          <button class="tab-btn" data-cat="MARKET">Market</button>
+          <button class="tab-btn" data-cat="COMPANY">Company</button>
+          <button class="tab-btn" data-cat="FIRM">Firm Announcements</button>
+        </div>
+
+        <div class="news-list" id="news-list"></div>
+      </section>
+
+      <!-- ============ ANALYTICS ============ -->
+      <section class="panel" data-panel="analytics">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">Analytics</h1>
+            <p class="panel-sub">Win rate, accuracy, performance &amp; engagement</p>
+          </div>
+          <div class="panel-actions">
+            <button class="btn-outline" data-export="calls">↓ Calls CSV</button>
+            <button class="btn-outline" data-export="performance">↓ Performance CSV</button>
+            <button class="btn-outline" data-firm-only data-export="clients">↓ Clients CSV</button>
+          </div>
+        </header>
+
+        <div class="grid grid-3">
+          <div class="card">
+            <div class="card-label">Win Rate</div>
+            <div class="summary-value" id="an-winrate">—</div>
+            <div class="summary-trend" id="an-winrate-sub">—</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Accuracy</div>
+            <div class="summary-value" id="an-accuracy">—</div>
+            <div class="summary-trend" id="an-accuracy-sub">—</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Avg Result / Call</div>
+            <div class="summary-value" id="an-avgresult">—</div>
+            <div class="summary-trend">Std dev shown below</div>
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-label">Monthly Performance</div>
+            <div class="chart-wrap" id="chart-monthly"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Sector Performance</div>
+            <div class="chart-wrap" id="chart-sector"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="card" data-firm-only>
+            <div class="card-label">Client Engagement</div>
+            <div class="chart-wrap" id="chart-engagement"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Call History (cumulative %)</div>
+            <div class="chart-wrap" id="chart-history"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ CLIENTS (firm-only) ============ -->
+      <section class="panel" data-panel="clients">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">Clients</h1>
+            <p class="panel-sub">Client profiles, tiers &amp; portfolio status</p>
+          </div>
+          <button class="btn-solid" id="btn-add-client">+ Add Client</button>
+        </header>
+
+        <div class="card card-wide">
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Name</th><th>Email</th><th>Tier</th><th>Status</th><th>Analyst</th><th>AUM</th><th>Joined</th></tr></thead>
+              <tbody id="clients-body"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ RESEARCH NOTES ============ -->
+      <section class="panel" data-panel="research">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">Research Notes</h1>
+            <p class="panel-sub">Internal &amp; client-linked analysis notes</p>
+          </div>
+          <button class="btn-solid" data-firm-only id="btn-add-note">+ New Note</button>
+        </header>
+
+        <div class="grid" id="notes-list" style="grid-template-columns:1fr;"></div>
+      </section>
+
+      <!-- ============ TASKS (firm-only) ============ -->
+      <section class="panel" data-panel="tasks">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">Task Management</h1>
+            <p class="panel-sub">Team workflow — todo, in progress, done</p>
+          </div>
+          <button class="btn-solid" id="btn-add-task">+ New Task</button>
+        </header>
+
+        <div class="task-board" id="task-board">
+          <div><div class="task-col-head">To Do</div><div id="task-col-TODO"></div></div>
+          <div><div class="task-col-head">In Progress</div><div id="task-col-IN_PROGRESS"></div></div>
+          <div><div class="task-col-head">Done</div><div id="task-col-DONE"></div></div>
+        </div>
+      </section>
+
+      <!-- ============ DOCUMENTS ============ -->
+      <section class="panel" data-panel="documents">
+        <header class="panel-head">
+          <div>
+            <h1 class="panel-title">Documents</h1>
+            <p class="panel-sub">Shared research, compliance &amp; client files</p>
+          </div>
+          <button class="btn-solid" data-firm-only id="btn-add-document">+ Register Document</button>
+        </header>
+
+        <div class="card card-wide">
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Filename</th><th>Category</th><th>Size</th><th>Uploaded By</th><th>Date</th></tr></thead>
+              <tbody id="documents-body"><tr><td colspan="5" class="empty-state">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ============ MODALS ============ -->
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal-box" id="modal-box"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
