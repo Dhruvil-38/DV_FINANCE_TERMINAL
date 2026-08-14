@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -8,7 +9,13 @@ import models
 from database import get_db
 from auth import get_current_user
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+def _timestamp(value: datetime | None) -> str | None:
+    return value.isoformat() + "Z" if value else None
 
 
 @router.get("/summary")
@@ -44,9 +51,11 @@ def summary(db: Session = Depends(get_db), user: models.User = Depends(get_curre
         cards.append({"label": "Open Tasks", "value": open_tasks, "trend": None, "kind": "neutral"})
     else:
         client = db.query(models.Client).filter(models.Client.id == user.client_id).first()
-        if client:
-            cards.append({"label": "Portfolio AUM", "value": f"₹{client.aum:,.0f}", "trend": None, "kind": "neutral"})
-            cards.append({"label": "Account Tier", "value": client.tier, "trend": None, "kind": "neutral"})
+        if client is None:
+            logger.warning("Client user %s points at missing client %s", user.id, user.client_id)
+        else:
+            cards.append({"label": "Portfolio AUM", "value": f"₹{client.aum or 0:,.0f}", "trend": None, "kind": "neutral"})
+            cards.append({"label": "Account Tier", "value": client.tier or "—", "trend": None, "kind": "neutral"})
 
     return {"cards": cards, "generated_at": datetime.utcnow().isoformat() + "Z"}
 
@@ -66,6 +75,9 @@ def call_performance(db: Session = Depends(get_db), user: models.User = Depends(
     for c in calls:
         if c.result_pct is not None:
             running += c.result_pct
+        if c.created_at is None:
+            logger.warning("Trade call %s has no created_at and is excluded from the series", c.id)
+            continue
         series.append({"date": c.created_at.strftime("%Y-%m-%d"), "cumulative_pct": round(running, 2)})
     return {"series": series}
 
@@ -80,7 +92,7 @@ def notifications(db: Session = Depends(get_db), user: models.User = Depends(get
         .all()
     )
     return {"notifications": [
-        {"id": n.id, "message": n.message, "level": n.level, "created_at": n.created_at.isoformat() + "Z"}
+        {"id": n.id, "message": n.message, "level": n.level, "created_at": _timestamp(n.created_at)}
         for n in items
     ]}
 
@@ -94,14 +106,14 @@ def recent_updates(db: Session = Depends(get_db), user: models.User = Depends(ge
     for c in recent_calls:
         updates.append({
             "type": "call", "title": f"{c.direction} call opened — {c.symbol}",
-            "timestamp": c.created_at.isoformat() + "Z", "meta": c.status,
+            "timestamp": _timestamp(c.created_at), "meta": c.status,
         })
 
     recent_news = db.query(models.NewsItem).order_by(models.NewsItem.published_at.desc()).limit(5).all()
     for n in recent_news:
         updates.append({
             "type": "news", "title": n.title,
-            "timestamp": n.published_at.isoformat() + "Z", "meta": n.category,
+            "timestamp": _timestamp(n.published_at), "meta": n.category,
         })
 
     if user.role != "client":
@@ -109,8 +121,9 @@ def recent_updates(db: Session = Depends(get_db), user: models.User = Depends(ge
         for note in recent_notes:
             updates.append({
                 "type": "note", "title": note.title,
-                "timestamp": note.created_at.isoformat() + "Z", "meta": note.created_by,
+                "timestamp": _timestamp(note.created_at), "meta": note.created_by,
             })
 
-    updates.sort(key=lambda u: u["timestamp"], reverse=True)
+    # A single undated row used to make the whole feed fail on the sort.
+    updates.sort(key=lambda u: u["timestamp"] or "", reverse=True)
     return {"updates": updates[:10]}

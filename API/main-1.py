@@ -9,15 +9,28 @@ Run:
     uvicorn main:app --reload --port 8000
 """
 
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 import seed
 from routers import (
     auth_router, dashboard_router, market_router, news_router,
-    analytics_router, clients_router, research_router, tasks_router,
+    analytics_router,
+)
+from engagement import (
+    clients_router, research_router, tasks_router,
     documents_router, reports_router,
 )
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+)
+logger = logging.getLogger("dvfinance")
 
 app = FastAPI(
     title="DV Finance Platform API",
@@ -37,7 +50,31 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    seed.run()
+    try:
+        seed.run()
+    except Exception:
+        # Starting up with an unusable database only defers the failure to the
+        # first request, with no trace of the real cause.
+        logger.exception("Database initialisation failed — refusing to start")
+        raise
+
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError):
+    logger.exception("Database error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "The database is unavailable — please retry."},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Unexpected server error."},
+    )
 
 
 app.include_router(auth_router.router)

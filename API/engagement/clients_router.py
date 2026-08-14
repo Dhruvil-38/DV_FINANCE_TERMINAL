@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from database import get_db
+from database import get_db, commit_session
 from auth import require_role, FIRM_ROLES
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
@@ -30,7 +30,7 @@ def create_client(
 ):
     row = models.Client(**client.model_dump())
     db.add(row)
-    db.commit()
+    commit_session(db, conflict_detail="A client with these details already exists")
     db.refresh(row)
     return row
 
@@ -47,6 +47,6 @@ def update_client(
         raise HTTPException(status_code=404, detail="Client not found")
     for field, value in payload.model_dump().items():
         setattr(row, field, value)
-    db.commit()
+    commit_session(db, conflict_detail="Could not update this client")
     db.refresh(row)
     return row

@@ -10,6 +10,7 @@ put this behind HTTPS only, and add refresh-token rotation + rate limiting
 on the login endpoint.
 """
 
+import logging
 import os
 from datetime import datetime, timedelta
 from typing import Iterable
@@ -23,6 +24,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 import models
 
+logger = logging.getLogger(__name__)
+
 SECRET_KEY = os.environ.get("DV_JWT_SECRET", "dev-secret-change-this-in-production-6f9a2c")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
@@ -35,7 +38,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        # A stored hash that bcrypt cannot parse is a data problem, not a 500.
+        logger.error("Stored password hash is not a valid bcrypt hash", exc_info=True)
+        return False
 
 
 def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
@@ -53,13 +61,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+    except JWTError as exc:
+        logger.info("Rejected token: %s", exc)
+        raise credentials_exception from exc
 
-    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    try:
+        user_pk = int(payload["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("Token carries an unusable 'sub' claim: %r", payload.get("sub"))
+        raise credentials_exception from exc
+
+    user = db.query(models.User).filter(models.User.id == user_pk).first()
     if user is None or not user.is_active:
         raise credentials_exception
     return user

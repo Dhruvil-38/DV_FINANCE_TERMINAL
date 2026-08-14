@@ -1,10 +1,15 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import models
 import schemas
 from database import get_db
 from auth import verify_password, create_access_token, get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -18,8 +23,14 @@ def login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
 
     if user.role == "client" and user.client_id:
-        db.add(models.EngagementEvent(client_id=user.client_id, event_type="LOGIN"))
-        db.commit()
+        # Engagement telemetry must never cost a valid user their login, but the
+        # failure still has to be visible in the logs.
+        try:
+            db.add(models.EngagementEvent(client_id=user.client_id, event_type="LOGIN"))
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.warning("Could not record LOGIN engagement event for user %s", user.id, exc_info=True)
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
     return schemas.TokenResponse(

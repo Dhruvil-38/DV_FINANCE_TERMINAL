@@ -4,11 +4,14 @@ Run automatically on API startup; can also run standalone: `python seed.py`.
 """
 
 from datetime import datetime, timedelta
+import logging
 import random
 
 from database import Base, engine, SessionLocal
 import models
 from auth import hash_password
+
+logger = logging.getLogger(__name__)
 
 
 def run():
@@ -188,10 +191,15 @@ def run():
         db.add_all(events)
 
         db.commit()
-        print("Seed complete.")
+        logger.info("Seed complete.")
+    except Exception:
+        db.rollback()
+        logger.exception("Seeding failed — rolled back")
+        raise
     finally:
         db.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     run()

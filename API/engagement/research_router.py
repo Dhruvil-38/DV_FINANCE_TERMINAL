@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from database import get_db
+from database import get_db, commit_session
 from auth import get_current_user, require_role, FIRM_ROLES
 
 router = APIRouter(prefix="/api/research-notes", tags=["research"])
@@ -31,6 +31,6 @@ def create_note(
 ):
     row = models.ResearchNote(**note.model_dump(), created_by=user.name)
     db.add(row)
-    db.commit()
+    commit_session(db, conflict_detail="Could not save this note — check the linked client and call")
     db.refresh(row)
     return row
