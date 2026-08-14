@@ -11,6 +11,17 @@ from auth import get_current_user
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
+def iso_z(value: datetime) -> str:
+    """UTC timestamp in the Z-suffixed form the frontend parses."""
+    return value.isoformat() + "Z"
+
+
+def feed_entries(db: Session, model, timestamp_column, kind: str, to_entry, limit: int = 5) -> list[dict]:
+    """Latest rows of one activity-feed source, tagged with its entry type."""
+    rows = db.query(model).order_by(timestamp_column.desc()).limit(limit).all()
+    return [{"type": kind, **to_entry(row)} for row in rows]
+
+
 @router.get("/summary")
 def summary(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     q = db.query(models.TradeCall)
@@ -48,7 +59,7 @@ def summary(db: Session = Depends(get_db), user: models.User = Depends(get_curre
             cards.append({"label": "Portfolio AUM", "value": f"₹{client.aum:,.0f}", "trend": None, "kind": "neutral"})
             cards.append({"label": "Account Tier", "value": client.tier, "trend": None, "kind": "neutral"})
 
-    return {"cards": cards, "generated_at": datetime.utcnow().isoformat() + "Z"}
+    return {"cards": cards, "generated_at": iso_z(datetime.utcnow())}
 
 
 @router.get("/call-performance")
@@ -80,7 +91,7 @@ def notifications(db: Session = Depends(get_db), user: models.User = Depends(get
         .all()
     )
     return {"notifications": [
-        {"id": n.id, "message": n.message, "level": n.level, "created_at": n.created_at.isoformat() + "Z"}
+        {"id": n.id, "message": n.message, "level": n.level, "created_at": iso_z(n.created_at)}
         for n in items
     ]}
 
@@ -88,29 +99,22 @@ def notifications(db: Session = Depends(get_db), user: models.User = Depends(get
 @router.get("/recent-updates")
 def recent_updates(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Unified activity feed across calls, news, and research notes."""
-    updates = []
-
-    recent_calls = db.query(models.TradeCall).order_by(models.TradeCall.created_at.desc()).limit(5).all()
-    for c in recent_calls:
-        updates.append({
-            "type": "call", "title": f"{c.direction} call opened — {c.symbol}",
-            "timestamp": c.created_at.isoformat() + "Z", "meta": c.status,
-        })
-
-    recent_news = db.query(models.NewsItem).order_by(models.NewsItem.published_at.desc()).limit(5).all()
-    for n in recent_news:
-        updates.append({
-            "type": "news", "title": n.title,
-            "timestamp": n.published_at.isoformat() + "Z", "meta": n.category,
-        })
+    updates = feed_entries(
+        db, models.TradeCall, models.TradeCall.created_at, "call",
+        lambda c: {
+            "title": f"{c.direction} call opened — {c.symbol}",
+            "timestamp": iso_z(c.created_at), "meta": c.status,
+        },
+    ) + feed_entries(
+        db, models.NewsItem, models.NewsItem.published_at, "news",
+        lambda n: {"title": n.title, "timestamp": iso_z(n.published_at), "meta": n.category},
+    )
 
     if user.role != "client":
-        recent_notes = db.query(models.ResearchNote).order_by(models.ResearchNote.created_at.desc()).limit(5).all()
-        for note in recent_notes:
-            updates.append({
-                "type": "note", "title": note.title,
-                "timestamp": note.created_at.isoformat() + "Z", "meta": note.created_by,
-            })
+        updates += feed_entries(
+            db, models.ResearchNote, models.ResearchNote.created_at, "note",
+            lambda note: {"title": note.title, "timestamp": iso_z(note.created_at), "meta": note.created_by},
+        )
 
     updates.sort(key=lambda u: u["timestamp"], reverse=True)
     return {"updates": updates[:10]}

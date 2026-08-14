@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+from crud import create_row, get_or_404, update_row
 from database import get_db
 from auth import require_role, FIRM_ROLES
 
@@ -16,11 +17,7 @@ def list_tasks(db: Session = Depends(get_db), user: models.User = Depends(requir
 
 @router.post("", response_model=schemas.TaskOut)
 def create_task(task: schemas.TaskCreate, db: Session = Depends(get_db), user: models.User = Depends(require_role(*FIRM_ROLES))):
-    row = models.Task(**task.model_dump())
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    return create_row(db, models.Task, task)
 
 
 @router.patch("/{task_id}", response_model=schemas.TaskOut)
@@ -30,11 +27,5 @@ def update_task(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role(*FIRM_ROLES)),
 ):
-    row = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Task not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(row, field, value)
-    db.commit()
-    db.refresh(row)
-    return row
+    row = get_or_404(db, models.Task, task_id, "Task not found")
+    return update_row(db, row, payload)

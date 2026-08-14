@@ -7,15 +7,7 @@ const API_BASE = window.location.origin.includes("5500") || window.location.prot
   ? "http://localhost:8000/api"   // adjust if your API runs elsewhere
   : "/api";
 
-const qs = (sel, root = document) => root.querySelector(sel);
-const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-const fmtINR = (n) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0);
-const fmtNum = (n, d = 2) => Number(n ?? 0).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d });
-const fmtPct = (n, d = 2) => (n === null || n === undefined) ? "—" : `${n >= 0 ? "+" : ""}${fmtNum(n, d)}%`;
-const fmtDate = (iso) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-const fmtDateTime = (iso) => new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-const initials = (name) => (name || "?").split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+/* DOM lookup, formatting, rendering and chart helpers live in utils.js. */
 
 /* ==========================================================================
    AUTH / SESSION
@@ -64,6 +56,37 @@ const apiPatch = (path, body) => apiRequest(path, { method: "PATCH", body });
 const apiDelete = (path) => apiRequest(path, { method: "DELETE" });
 
 function isFirmRole(role) { return ["admin", "analyst", "staff"].includes(role); }
+
+const toastError = (err) => toast(err.message, true);
+
+/** Runs a load/render step, surfacing any failure as an error toast. */
+async function guard(work) {
+  try { return await work(); } catch (err) { toastError(err); }
+}
+
+/**
+ * Runs a write request, then confirms it and refreshes the affected panels.
+ * `reload` is re-fetched immediately; `invalidate` panels re-fetch on next visit.
+ */
+async function mutate(request, { success, reload, invalidate = [] } = {}) {
+  return guard(async () => {
+    const result = await request();
+    if (success) toast(success);
+    invalidate.forEach((name) => loadedPanels.delete(name));
+    if (reload) reloadPanel(reload);
+    return result;
+  });
+}
+
+/** Attaches a handler that receives the element, for every match of `selector`. */
+function bindEach(selector, event, handler) {
+  qsa(selector).forEach((el) => el.addEventListener(event, () => handler(el)));
+}
+
+/** Wires a toolbar button that opens a modal — once, since panels re-render. */
+function bindOnce(selector, handler) {
+  qs(selector)?.addEventListener("click", handler, { once: true });
+}
 
 /* ==========================================================================
    LOGIN
@@ -156,12 +179,15 @@ function switchPanel(name) {
   }
 }
 
+/** Drops the cached state of a panel and re-runs its loader. */
+function reloadPanel(name) {
+  loadedPanels.delete(name);
+  PANEL_LOADERS[name]?.();
+}
+
 function initNav() {
-  qsa(".nav-item[data-panel]").forEach((btn) => btn.addEventListener("click", () => switchPanel(btn.dataset.panel)));
-  qsa("[data-refresh]").forEach((btn) => btn.addEventListener("click", () => {
-    loadedPanels.delete(btn.dataset.refresh);
-    PANEL_LOADERS[btn.dataset.refresh]?.();
-  }));
+  bindEach(".nav-item[data-panel]", "click", (btn) => switchPanel(btn.dataset.panel));
+  bindEach("[data-refresh]", "click", (btn) => reloadPanel(btn.dataset.refresh));
   qs("#logout-btn").addEventListener("click", logout);
 
   qs("#bell-btn").addEventListener("click", () => qs("#notif-dropdown").classList.toggle("hidden"));
@@ -189,6 +215,17 @@ function toast(message, isError = false) {
    MODALS
    ========================================================================== */
 
+/**
+ * Wires a modal form: submits, closes the modal, then refreshes `reload`.
+ * `submit` reads the form fields and performs the write request.
+ */
+function bindModalForm(formSelector, { submit, success, reload }) {
+  qs(formSelector).addEventListener("submit", (e) => {
+    e.preventDefault();
+    mutate(async () => { await submit(); closeModal(); }, { success, reload });
+  });
+}
+
 function openModal(html, onMount) {
   qs("#modal-box").innerHTML = html;
   qs("#modal-overlay").classList.remove("hidden");
@@ -199,71 +236,11 @@ function closeModal() { qs("#modal-overlay").classList.add("hidden"); }
 qs("#modal-overlay").addEventListener("click", (e) => { if (e.target.id === "modal-overlay") closeModal(); });
 
 /* ==========================================================================
-   LIGHTWEIGHT CHARTS (no external dependency)
-   ========================================================================== */
-
-function renderBarChart(container, items, { labelKey = "label", valueKey = "value" } = {}) {
-  if (!items.length) { container.innerHTML = `<div class="empty-state">No data yet.</div>`; return; }
-  const max = Math.max(...items.map((i) => Math.abs(i[valueKey])), 1);
-  container.innerHTML = `<div class="bar-chart">${items.map((i) => {
-    const val = i[valueKey];
-    const heightPct = Math.max((Math.abs(val) / max) * 100, 2);
-    return `
-      <div class="bar-col">
-        <span class="bar-value">${fmtNum(val, 1)}</span>
-        <div class="bar-fill ${val < 0 ? "neg" : ""}" style="height:${heightPct}%"></div>
-        <span class="bar-label">${i[labelKey]}</span>
-      </div>`;
-  }).join("")}</div>`;
-}
-
-function renderHBarChart(container, items, { labelKey = "label", valueKey = "value" } = {}) {
-  if (!items.length) { container.innerHTML = `<div class="empty-state">No data yet.</div>`; return; }
-  const max = Math.max(...items.map((i) => Math.abs(i[valueKey])), 1);
-  container.innerHTML = items.map((i) => {
-    const val = i[valueKey];
-    const widthPct = Math.max((Math.abs(val) / max) * 100, 1.5);
-    return `
-      <div class="hbar-row">
-        <span>${i[labelKey]}</span>
-        <div class="hbar-track"><div class="hbar-fill ${val < 0 ? "neg" : ""}" style="width:${widthPct}%"></div></div>
-        <span class="mono">${fmtNum(val, 1)}</span>
-      </div>`;
-  }).join("");
-}
-
-function renderSparkline(container, points, { height = 140 } = {}) {
-  if (!points.length) { container.innerHTML = `<div class="empty-state">No data yet.</div>`; return; }
-  const width = Math.max(points.length * 26, 260);
-  const values = points.map((p) => p.y);
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 0);
-  const range = max - min || 1;
-  const stepX = width / Math.max(points.length - 1, 1);
-
-  const coords = points.map((p, i) => {
-    const x = i * stepX;
-    const y = height - ((p.y - min) / range) * (height - 20) - 10;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-
-  const last = values[values.length - 1];
-  const strokeColor = last >= 0 ? "#14b8a6" : "#ef4444";
-  const zeroY = height - ((0 - min) / range) * (height - 20) - 10;
-
-  container.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="none">
-      <line x1="0" y1="${zeroY}" x2="${width}" y2="${zeroY}" stroke="#212836" stroke-width="1" stroke-dasharray="4 4" />
-      <polyline points="${coords.join(" ")}" fill="none" stroke="${strokeColor}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" />
-    </svg>`;
-}
-
-/* ==========================================================================
    DASHBOARD
    ========================================================================== */
 
 async function loadDashboard() {
-  try {
+  await guard(async () => {
     const [summary, notif, updates, perf] = await Promise.all([
       apiGet("/dashboard/summary"),
       apiGet("/dashboard/notifications"),
@@ -280,10 +257,9 @@ async function loadDashboard() {
 
     renderSparkline(qs("#call-perf-chart"), perf.series.map((s) => ({ x: s.date, y: s.cumulative_pct })));
 
-    const notifBody = notif.notifications.map((n) => `
+    renderList(qs("#dash-notifications"), notif.notifications, (n) => `
       <div class="kv-row"><span class="k">${n.message}</span><span class="v" style="color:var(--text-low);font-weight:400;font-size:10.5px">${fmtDateTime(n.created_at)}</span></div>
-    `).join("") || `<div class="empty-state">No notifications.</div>`;
-    qs("#dash-notifications").innerHTML = notifBody;
+    `, "No notifications.");
 
     qs("#notif-list").innerHTML = notif.notifications.map((n) => `
       <div class="notif-item"><span class="notif-dot ${n.level}"></span><span>${n.message}</span></div>
@@ -300,37 +276,37 @@ async function loadDashboard() {
             <td style="color:var(--text-low)">${fmtDateTime(u.timestamp)}</td>
           </tr>`).join("") || `<tr><td class="empty-state">No recent activity.</td></tr>`}
       </tbody></table>`;
-  } catch (err) {
-    toast(err.message, true);
-  }
+  });
 }
 
 /* ==========================================================================
    MARKET
    ========================================================================== */
 
+const CALL_STATUSES = ["ACTIVE", "TARGET_HIT", "SL_HIT", "CLOSED", "CANCELLED"];
+
 async function loadMarket() {
   const isFirm = isFirmRole(session.user.role);
-  try {
+  await guard(async () => {
     const [watchlist, calls] = await Promise.all([apiGet("/market/watchlist"), apiGet("/market/calls")]);
 
-    qs("#watchlist-body").innerHTML = watchlist.map((w) => `
+    renderRows(qs("#watchlist-body"), watchlist, (w) => `
       <tr>
         <td class="mono">${w.symbol}</td>
         <td>${w.sector}</td>
         <td class="mono">${fmtNum(w.last_price)}</td>
-        <td class="mono ${w.day_change_pct >= 0 ? "pos" : "neg"}">${fmtPct(w.day_change_pct)}</td>
+        <td class="mono ${signClass(w.day_change_pct)}">${fmtPct(w.day_change_pct)}</td>
         <td style="color:var(--text-low)">${w.added_by || "—"}</td>
         ${isFirm ? `<td><button class="icon-btn" data-del-watch="${w.id}">Remove</button></td>` : ""}
       </tr>
-    `).join("") || `<tr><td colspan="6" class="empty-state">Watchlist is empty.</td></tr>`;
+    `, { colspan: 6, emptyMessage: "Watchlist is empty." });
 
-    qsa("[data-del-watch]").forEach((btn) => btn.addEventListener("click", async () => {
-      try { await apiDelete(`/market/watchlist/${btn.dataset.delWatch}`); toast("Removed from watchlist."); loadedPanels.delete("market"); loadMarket(); }
-      catch (err) { toast(err.message, true); }
-    }));
+    bindEach("[data-del-watch]", "click", (btn) => mutate(
+      () => apiDelete(`/market/watchlist/${btn.dataset.delWatch}`),
+      { success: "Removed from watchlist.", reload: "market" },
+    ));
 
-    qs("#calls-body").innerHTML = calls.map((c) => `
+    renderRows(qs("#calls-body"), calls, (c) => `
       <tr>
         <td class="mono">${c.symbol}</td>
         <td>${c.sector}</td>
@@ -338,25 +314,25 @@ async function loadMarket() {
         <td class="mono">${fmtNum(c.entry)}</td>
         <td class="mono">${fmtNum(c.stop_loss)}</td>
         <td class="mono">${fmtNum(c.target)}</td>
-        <td><span class="badge ${c.status}">${c.status.replace("_", " ")}</span></td>
-        <td class="mono ${(c.result_pct ?? 0) >= 0 ? "pos" : "neg"}">${fmtPct(c.result_pct)}</td>
+        <td><span class="badge ${c.status}">${humanize(c.status)}</span></td>
+        <td class="mono ${signClass(c.result_pct)}">${fmtPct(c.result_pct)}</td>
         <td style="max-width:180px;white-space:normal;color:var(--text-low)">${c.notes || "—"}</td>
         ${isFirm ? `<td>
           <select data-call-status="${c.id}" style="background:var(--bg-input);border:1px solid var(--border);border-radius:5px;font-size:10.5px;padding:4px;">
-            ${["ACTIVE", "TARGET_HIT", "SL_HIT", "CLOSED", "CANCELLED"].map((s) => `<option value="${s}" ${s === c.status ? "selected" : ""}>${s.replace("_", " ")}</option>`).join("")}
+            ${selectOptions(CALL_STATUSES, c.status)}
           </select>
         </td>` : ""}
       </tr>
-    `).join("") || `<tr><td colspan="10" class="empty-state">No trade calls yet.</td></tr>`;
+    `, { colspan: 10, emptyMessage: "No trade calls yet." });
 
-    qsa("[data-call-status]").forEach((sel) => sel.addEventListener("change", async () => {
-      try { await apiPatch(`/market/calls/${sel.dataset.callStatus}`, { status: sel.value }); toast("Call status updated."); loadedPanels.delete("market"); loadMarket(); loadedPanels.delete("analytics"); }
-      catch (err) { toast(err.message, true); }
-    }));
-  } catch (err) { toast(err.message, true); }
+    bindEach("[data-call-status]", "change", (sel) => mutate(
+      () => apiPatch(`/market/calls/${sel.dataset.callStatus}`, { status: sel.value }),
+      { success: "Call status updated.", reload: "market", invalidate: ["analytics"] },
+    ));
+  });
 
-  qs("#btn-add-watchlist")?.addEventListener("click", openAddWatchlistModal, { once: true });
-  qs("#btn-add-call")?.addEventListener("click", openAddCallModal, { once: true });
+  bindOnce("#btn-add-watchlist", openAddWatchlistModal);
+  bindOnce("#btn-add-call", openAddCallModal);
 }
 
 function openAddWatchlistModal() {
@@ -371,18 +347,13 @@ function openAddWatchlistModal() {
       </div>
       <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Add</button></div>
     </form>
-  `, () => {
-    qs("#watch-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      try {
-        await apiPost("/market/watchlist", {
-          symbol: qs("#w-symbol").value.toUpperCase(), sector: qs("#w-sector").value,
-          last_price: parseFloat(qs("#w-price").value), day_change_pct: parseFloat(qs("#w-change").value),
-        });
-        toast("Added to watchlist."); closeModal(); loadedPanels.delete("market"); loadMarket();
-      } catch (err) { toast(err.message, true); }
-    });
-  });
+  `, () => bindModalForm("#watch-form", {
+    submit: () => apiPost("/market/watchlist", {
+      symbol: qs("#w-symbol").value.toUpperCase(), sector: qs("#w-sector").value,
+      last_price: parseFloat(qs("#w-price").value), day_change_pct: parseFloat(qs("#w-change").value),
+    }),
+    success: "Added to watchlist.", reload: "market",
+  }));
 }
 
 function openAddCallModal() {
@@ -404,20 +375,15 @@ function openAddCallModal() {
       <div class="form-field"><label>Notes</label><textarea id="c-notes"></textarea></div>
       <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Create Call</button></div>
     </form>
-  `, () => {
-    qs("#call-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      try {
-        await apiPost("/market/calls", {
-          symbol: qs("#c-symbol").value.toUpperCase(), sector: qs("#c-sector").value,
-          direction: qs("#c-direction").value, entry: parseFloat(qs("#c-entry").value),
-          stop_loss: parseFloat(qs("#c-sl").value), target: parseFloat(qs("#c-target").value),
-          notes: qs("#c-notes").value,
-        });
-        toast("Trade call created."); closeModal(); loadedPanels.delete("market"); loadMarket();
-      } catch (err) { toast(err.message, true); }
-    });
-  });
+  `, () => bindModalForm("#call-form", {
+    submit: () => apiPost("/market/calls", {
+      symbol: qs("#c-symbol").value.toUpperCase(), sector: qs("#c-sector").value,
+      direction: qs("#c-direction").value, entry: parseFloat(qs("#c-entry").value),
+      stop_loss: parseFloat(qs("#c-sl").value), target: parseFloat(qs("#c-target").value),
+      notes: qs("#c-notes").value,
+    }),
+    success: "Trade call created.", reload: "market",
+  }));
 }
 
 /* ==========================================================================
@@ -426,9 +392,9 @@ function openAddCallModal() {
 
 async function loadNews(category) {
   qsa("#news-tabs .tab-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.cat === category));
-  try {
+  await guard(async () => {
     const items = await apiGet(`/news${category ? `?category=${category}` : ""}`);
-    qs("#news-list").innerHTML = items.map((n) => `
+    renderList(qs("#news-list"), items, (n) => `
       <div class="card news-card">
         <div class="news-card-head">
           <h3 class="news-title">${n.title}</h3>
@@ -437,13 +403,13 @@ async function loadNews(category) {
         <p class="news-meta">${n.source} · ${fmtDateTime(n.published_at)}</p>
         <p class="news-body">${n.body}</p>
       </div>
-    `).join("") || `<div class="empty-state">No news in this category yet.</div>`;
-  } catch (err) { toast(err.message, true); }
+    `, "No news in this category yet.");
+  });
 
   qsa("#news-tabs .tab-btn").forEach((b) => {
     b.onclick = () => loadNews(b.dataset.cat);
   });
-  qs("#btn-add-news")?.addEventListener("click", openAddNewsModal, { once: true });
+  bindOnce("#btn-add-news", openAddNewsModal);
 }
 
 function openAddNewsModal() {
@@ -458,15 +424,10 @@ function openAddNewsModal() {
       <div class="form-field"><label>Source</label><input type="text" id="n-source" value="DV Finance Desk"></div>
       <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Publish</button></div>
     </form>
-  `, () => {
-    qs("#news-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      try {
-        await apiPost("/news", { category: qs("#n-category").value, title: qs("#n-title").value, body: qs("#n-body").value, source: qs("#n-source").value });
-        toast("Published."); closeModal(); loadNews("");
-      } catch (err) { toast(err.message, true); }
-    });
-  });
+  `, () => bindModalForm("#news-form", {
+    submit: () => apiPost("/news", { category: qs("#n-category").value, title: qs("#n-title").value, body: qs("#n-body").value, source: qs("#n-source").value }),
+    success: "Published.", reload: "news",
+  }));
 }
 
 /* ==========================================================================
@@ -475,7 +436,7 @@ function openAddNewsModal() {
 
 async function loadAnalytics() {
   const isFirm = isFirmRole(session.user.role);
-  try {
+  await guard(async () => {
     const calls = [
       apiGet("/analytics/win-rate"), apiGet("/analytics/accuracy"),
       apiGet("/analytics/monthly-performance"), apiGet("/analytics/sector-performance"),
@@ -500,18 +461,16 @@ async function loadAnalytics() {
     if (isFirm && engagement) {
       renderHBarChart(qs("#chart-engagement"), engagement.clients, { labelKey: "client_name", valueKey: "engagement_score" });
     }
-  } catch (err) { toast(err.message, true); }
+  });
 
   qsa("[data-export]").forEach((btn) => {
-    btn.onclick = async () => {
-      try {
-        const blob = await apiRequest(`/reports/export?type=${btn.dataset.export}`);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = `dvfinance_${btn.dataset.export}.csv`; a.click();
-        URL.revokeObjectURL(url);
-      } catch (err) { toast(err.message, true); }
-    };
+    btn.onclick = () => guard(async () => {
+      const blob = await apiRequest(`/reports/export?type=${btn.dataset.export}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `dvfinance_${btn.dataset.export}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    });
   });
 }
 
@@ -520,9 +479,9 @@ async function loadAnalytics() {
    ========================================================================== */
 
 async function loadClients() {
-  try {
+  await guard(async () => {
     const clients = await apiGet("/clients");
-    qs("#clients-body").innerHTML = clients.map((c) => `
+    renderRows(qs("#clients-body"), clients, (c) => `
       <tr>
         <td>${c.name}</td>
         <td style="color:var(--text-low)">${c.email}</td>
@@ -532,10 +491,10 @@ async function loadClients() {
         <td class="mono">${fmtINR(c.aum)}</td>
         <td style="color:var(--text-low)">${fmtDate(c.joined_at)}</td>
       </tr>
-    `).join("") || `<tr><td colspan="7" class="empty-state">No clients yet.</td></tr>`;
-  } catch (err) { toast(err.message, true); }
+    `, { colspan: 7, emptyMessage: "No clients yet." });
+  });
 
-  qs("#btn-add-client")?.addEventListener("click", openAddClientModal, { once: true });
+  bindOnce("#btn-add-client", openAddClientModal);
 }
 
 function openAddClientModal() {
@@ -556,18 +515,13 @@ function openAddClientModal() {
       </div>
       <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Add Client</button></div>
     </form>
-  `, () => {
-    qs("#client-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      try {
-        await apiPost("/clients", {
-          name: qs("#cl-name").value, email: qs("#cl-email").value, phone: qs("#cl-phone").value,
-          tier: qs("#cl-tier").value, assigned_analyst: qs("#cl-analyst").value, aum: parseFloat(qs("#cl-aum").value || 0),
-        });
-        toast("Client added."); closeModal(); loadedPanels.delete("clients"); loadClients();
-      } catch (err) { toast(err.message, true); }
-    });
-  });
+  `, () => bindModalForm("#client-form", {
+    submit: () => apiPost("/clients", {
+      name: qs("#cl-name").value, email: qs("#cl-email").value, phone: qs("#cl-phone").value,
+      tier: qs("#cl-tier").value, assigned_analyst: qs("#cl-analyst").value, aum: parseFloat(qs("#cl-aum").value || 0),
+    }),
+    success: "Client added.", reload: "clients",
+  }));
 }
 
 /* ==========================================================================
@@ -575,18 +529,18 @@ function openAddClientModal() {
    ========================================================================== */
 
 async function loadResearch() {
-  try {
+  await guard(async () => {
     const notes = await apiGet("/research-notes");
-    qs("#notes-list").innerHTML = notes.map((n) => `
+    renderList(qs("#notes-list"), notes, (n) => `
       <div class="card">
         <div class="news-card-head"><h3 class="news-title">${n.title}</h3><span class="mono" style="font-size:10.5px;color:var(--text-low)">${fmtDate(n.created_at)}</span></div>
         <p class="news-body">${n.body}</p>
         <p style="font-size:10.5px;color:var(--text-low);margin-top:8px;">By ${n.created_by}${n.client_id ? ` · Client #${n.client_id}` : ""}${n.call_id ? ` · Call #${n.call_id}` : ""}</p>
       </div>
-    `).join("") || `<div class="empty-state">No research notes yet.</div>`;
-  } catch (err) { toast(err.message, true); }
+    `, "No research notes yet.");
+  });
 
-  qs("#btn-add-note")?.addEventListener("click", async () => {
+  bindOnce("#btn-add-note", async () => {
     let clientOptions = "<option value=''>— None —</option>";
     if (isFirmRole(session.user.role)) {
       try {
@@ -602,50 +556,45 @@ async function loadResearch() {
         <div class="form-field"><label>Linked Client (optional)</label><select id="note-client">${clientOptions}</select></div>
         <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Save Note</button></div>
       </form>
-    `, () => {
-      qs("#note-form").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        try {
-          await apiPost("/research-notes", {
-            title: qs("#note-title").value, body: qs("#note-body").value,
-            client_id: qs("#note-client").value ? parseInt(qs("#note-client").value) : null,
-          });
-          toast("Note saved."); closeModal(); loadedPanels.delete("research"); loadResearch();
-        } catch (err) { toast(err.message, true); }
-      });
-    });
-  }, { once: true });
+    `, () => bindModalForm("#note-form", {
+      submit: () => apiPost("/research-notes", {
+        title: qs("#note-title").value, body: qs("#note-body").value,
+        client_id: qs("#note-client").value ? parseInt(qs("#note-client").value) : null,
+      }),
+      success: "Note saved.", reload: "research",
+    }));
+  });
 }
 
 /* ==========================================================================
    TASKS
    ========================================================================== */
 
+const TASK_STATUSES = ["TODO", "IN_PROGRESS", "DONE"];
+
 async function loadTasks() {
-  try {
+  await guard(async () => {
     const tasks = await apiGet("/tasks");
-    ["TODO", "IN_PROGRESS", "DONE"].forEach((status) => {
-      const col = qs(`#task-col-${status}`);
-      const items = tasks.filter((t) => t.status === status);
-      col.innerHTML = items.map((t) => `
+    TASK_STATUSES.forEach((status) => {
+      renderList(qs(`#task-col-${status}`), tasks.filter((t) => t.status === status), (t) => `
         <div class="task-card">
           <div class="task-card-title">${t.title}</div>
           <div class="task-card-meta"><span class="badge ${t.priority}">${t.priority}</span><span>${t.assigned_to || "Unassigned"}</span></div>
           ${t.due_date ? `<div style="font-size:10px;color:var(--text-low);margin-top:6px;">Due ${fmtDate(t.due_date)}</div>` : ""}
           <select data-task-status="${t.id}">
-            ${["TODO", "IN_PROGRESS", "DONE"].map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${s.replace("_", " ")}</option>`).join("")}
+            ${selectOptions(TASK_STATUSES, t.status)}
           </select>
         </div>
-      `).join("") || `<div class="empty-state">Empty</div>`;
+      `, "Empty");
     });
 
-    qsa("[data-task-status]").forEach((sel) => sel.addEventListener("change", async () => {
-      try { await apiPatch(`/tasks/${sel.dataset.taskStatus}`, { status: sel.value }); toast("Task updated."); loadedPanels.delete("tasks"); loadTasks(); }
-      catch (err) { toast(err.message, true); }
-    }));
-  } catch (err) { toast(err.message, true); }
+    bindEach("[data-task-status]", "change", (sel) => mutate(
+      () => apiPatch(`/tasks/${sel.dataset.taskStatus}`, { status: sel.value }),
+      { success: "Task updated.", reload: "tasks" },
+    ));
+  });
 
-  qs("#btn-add-task")?.addEventListener("click", openAddTaskModal, { once: true });
+  bindOnce("#btn-add-task", openAddTaskModal);
 }
 
 function openAddTaskModal() {
@@ -661,18 +610,13 @@ function openAddTaskModal() {
       <div class="form-field"><label>Due Date</label><input type="date" id="t-due"></div>
       <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Create Task</button></div>
     </form>
-  `, () => {
-    qs("#task-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      try {
-        await apiPost("/tasks", {
-          title: qs("#t-title").value, description: qs("#t-desc").value, priority: qs("#t-priority").value,
-          assigned_to: qs("#t-assignee").value, due_date: qs("#t-due").value ? new Date(qs("#t-due").value).toISOString() : null,
-        });
-        toast("Task created."); closeModal(); loadedPanels.delete("tasks"); loadTasks();
-      } catch (err) { toast(err.message, true); }
-    });
-  });
+  `, () => bindModalForm("#task-form", {
+    submit: () => apiPost("/tasks", {
+      title: qs("#t-title").value, description: qs("#t-desc").value, priority: qs("#t-priority").value,
+      assigned_to: qs("#t-assignee").value, due_date: qs("#t-due").value ? new Date(qs("#t-due").value).toISOString() : null,
+    }),
+    success: "Task created.", reload: "tasks",
+  }));
 }
 
 /* ==========================================================================
@@ -680,9 +624,9 @@ function openAddTaskModal() {
    ========================================================================== */
 
 async function loadDocuments() {
-  try {
+  await guard(async () => {
     const docs = await apiGet("/documents");
-    qs("#documents-body").innerHTML = docs.map((d) => `
+    renderRows(qs("#documents-body"), docs, (d) => `
       <tr>
         <td>▥ ${d.filename}</td>
         <td><span class="badge info">${d.category}</span></td>
@@ -690,10 +634,10 @@ async function loadDocuments() {
         <td style="color:var(--text-low)">${d.uploaded_by}</td>
         <td style="color:var(--text-low)">${fmtDate(d.uploaded_at)}</td>
       </tr>
-    `).join("") || `<tr><td colspan="5" class="empty-state">No documents yet.</td></tr>`;
-  } catch (err) { toast(err.message, true); }
+    `, { colspan: 5, emptyMessage: "No documents yet." });
+  });
 
-  qs("#btn-add-document")?.addEventListener("click", openAddDocumentModal, { once: true });
+  bindOnce("#btn-add-document", openAddDocumentModal);
 }
 
 function openAddDocumentModal() {
@@ -706,20 +650,15 @@ function openAddDocumentModal() {
       </div>
       <div class="modal-footer"><button type="button" class="btn-ghost" data-modal-close>Cancel</button><button type="submit" class="btn-solid">Upload</button></div>
     </form>
-  `, () => {
-    qs("#doc-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const fileInput = qs("#doc-file");
-      if (!fileInput.files.length) return;
+  `, () => bindModalForm("#doc-form", {
+    submit: () => {
       const form = new FormData();
-      form.append("file", fileInput.files[0]);
+      form.append("file", qs("#doc-file").files[0]);
       form.append("category", qs("#doc-category").value);
-      try {
-        await apiRequest("/documents/upload", { method: "POST", body: form, isForm: true });
-        toast("Document uploaded."); closeModal(); loadedPanels.delete("documents"); loadDocuments();
-      } catch (err) { toast(err.message, true); }
-    });
-  });
+      return apiRequest("/documents/upload", { method: "POST", body: form, isForm: true });
+    },
+    success: "Document uploaded.", reload: "documents",
+  }));
 }
 
 /* ==========================================================================
