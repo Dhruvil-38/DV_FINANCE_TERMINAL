@@ -71,6 +71,17 @@ forwarded to the backend, which is the recommended production setup).
 
 The login screen has one-click buttons that autofill these for you.
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest                                          # runs API/tests
+pytest --cov=API --cov-report=term-missing      # with a coverage report
+```
+
+Tests run against an in-memory SQLite database (`DATABASE_URL` is overridden in
+`API/tests/conftest.py`), so they never touch `dv_platform.db` or the `uploads/` directory.
+
 ## Roles & permissions
 
 | Module | Admin | Analyst | Staff | Client |
