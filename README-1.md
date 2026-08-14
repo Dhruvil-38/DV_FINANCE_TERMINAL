@@ -41,11 +41,16 @@ dv-platform/
 # 1. Install backend dependencies
 pip install -r requirements.txt
 
-# 2. Start the API — creates dv_platform.db and seeds demo data on first run
+# 2. Configure the JWT signing secret (required — there is no built-in default)
+export DV_JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+# ...or, for a throwaway run with a random per-process secret:
+# export DV_ALLOW_EPHEMERAL_JWT_SECRET=1
+
+# 3. Start the API — creates dv_platform.db and seeds demo data on first run
 cd api
 uvicorn main:app --reload --port 8000
 
-# 3. In a second terminal, serve the frontend
+# 4. In a second terminal, serve the frontend
 cd frontend
 python3 -m http.server 5500
 ```
@@ -65,6 +70,17 @@ forwarded to the backend, which is the recommended production setup).
 | Client | client@dvfinance.in | Client@123 |
 
 The login screen has one-click buttons that autofill these for you.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest                                          # runs API/tests
+pytest --cov=API --cov-report=term-missing      # with a coverage report
+```
+
+Tests run against an in-memory SQLite database (`DATABASE_URL` is overridden in
+`API/tests/conftest.py`), so they never touch `dv_platform.db` or the `uploads/` directory.
 
 ## Roles & permissions
 
@@ -95,17 +111,50 @@ router) — the frontend hiding UI elements is a convenience, not the security b
 - Stateless JWT auth (8-hour expiry), verified on every protected request
 - Role-based access control enforced at the API layer, not just hidden in the UI
 - Parameterized queries throughout via SQLAlchemy ORM (no raw SQL string building)
-- Pydantic validates and coerces every request body before it touches the database
+- Pydantic validates and coerces every request body before it touches the database;
+  enum-like fields (statuses, tiers, categories, direction) are `Literal`-constrained
+  and every free-text field is length-capped
+- JWT signing secret is read from `DV_JWT_SECRET` with **no fallback** — the app
+  refuses to start without one
+- CORS allow-list comes from `DV_ALLOWED_ORIGINS` (defaults to the local dev
+  frontend); `"*"` is rejected outright since credentials are allowed
+- Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off unless
+  `DV_EXPOSE_DOCS=1`
+- Uploads are extension-allow-listed, size-capped (20 MB), and written under a
+  random server-generated name, so a client-supplied filename can never traverse
+  out of `api/uploads/` or overwrite an existing file
+- Failed logins are throttled per IP + email (`DV_LOGIN_MAX_ATTEMPTS`,
+  `DV_LOGIN_WINDOW_SECONDS`) — per-process, so put a shared limiter in front when
+  running multiple workers
+- All server-supplied values are HTML-escaped before being rendered in the SPA
+- CSV exports neutralise spreadsheet formula injection
+- Demo accounts are only seeded on the default local SQLite database (override
+  with `DV_SEED_DEMO_DATA`)
 
-**Before a real production deploy:**
-- Move `SECRET_KEY` (in `auth.py`) out of source and into an environment variable / secrets manager — the checked-in value is a dev default only
-- Set `CORSMiddleware(allow_origins=[...])` to your actual frontend origin(s) instead of `"*"`
+### Environment variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DV_JWT_SECRET` | yes | — | JWT signing key, min 32 chars |
+| `DV_ALLOW_EPHEMERAL_JWT_SECRET` | no | off | Dev-only: random per-process secret |
+| `DV_ALLOWED_ORIGINS` | no | `http://localhost:5500,http://127.0.0.1:5500` | Comma-separated CORS allow-list |
+| `DV_EXPOSE_DOCS` | no | off | Serve `/docs`, `/redoc`, `/openapi.json` |
+| `DV_LOGIN_MAX_ATTEMPTS` / `DV_LOGIN_WINDOW_SECONDS` | no | `10` / `300` | Failed-login throttle |
+| `DV_SEED_DEMO_DATA` | no | on for default SQLite DB | Seed demo users/content |
+| `DATABASE_URL` | no | `sqlite:///./dv_platform.db` | SQLAlchemy DSN |
+
+**Still to do before a real production deploy:**
 - Serve everything over HTTPS only
 - Swap SQLite for Postgres/MySQL for concurrent production traffic (`DATABASE_URL` env var — no code changes needed, SQLAlchemy handles it)
-- Consider moving the JWT out of `localStorage` and into an `httpOnly` cookie to reduce XSS blast radius
-- Add rate limiting on `/api/auth/login` to slow down credential-stuffing attempts
+- Move the JWT out of `localStorage` and into an `httpOnly` cookie to reduce XSS blast radius
+- Move the login throttle to a shared store (Redis) or an edge/WAF rule once more than one worker is running
 - Add refresh-token rotation if you want sessions longer than 8 hours without re-prompting for a password
-- Put a real virus/file-type scan in front of `/api/documents/upload` before accepting arbitrary files in production
+- Put a real virus/content-type scan in front of `/api/documents/upload` (the extension allow-list is not a content check)
+- `python-jose` transitively pulls `ecdsa`, which has an unfixed Minerva timing
+  advisory (PYSEC-2026-1325). Not exploitable here — tokens are signed with HS256,
+  so no ECDSA/ECDH code path runs — but switching to `PyJWT` would drop the
+  dependency entirely
+- Remove the demo-account autofill buttons from the login screen — the passwords are hardcoded in `index.html`
 
 ## Data — what's real vs. seeded
 

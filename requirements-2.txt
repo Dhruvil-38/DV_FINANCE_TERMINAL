@@ -1,9 +1,10 @@
-fastapi>=0.111
+# Lower bounds are security floors, not style choices — see README security notes.
+fastapi>=0.115.3           # <0.115.3 pulls starlette <0.40 (CVE-2024-47874 DoS)
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0
 pydantic[email]>=2.7
-python-jose[cryptography]>=3.3
+python-jose[cryptography]>=3.4.0   # CVE-2024-33663 / CVE-2024-33664
 bcrypt>=4.1
 pandas>=2.2
 numpy>=1.26
-python-multipart>=0.0.9
+python-multipart>=0.0.18   # CVE-2024-53981 (multipart DoS)

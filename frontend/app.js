@@ -7,7 +7,7 @@ const API_BASE = window.location.origin.includes("5500") || window.location.prot
   ? "http://localhost:8000/api"   // adjust if your API runs elsewhere
   : "/api";
 
-/* DOM lookup, formatting, rendering and chart helpers live in utils.js. */
+/* DOM lookup, escaping, formatting, rendering and chart helpers live in utils.js. */
 
 /* ==========================================================================
    AUTH / SESSION
@@ -250,19 +250,19 @@ async function loadDashboard() {
 
     qs("#summary-cards").innerHTML = summary.cards.map((c) => `
       <div class="card summary-card">
-        <div class="card-label">${c.label}</div>
-        <div class="summary-value ${c.trend === "up" ? "up" : c.trend === "down" ? "down" : ""}">${c.value}</div>
+        <div class="card-label">${esc(c.label)}</div>
+        <div class="summary-value ${c.trend === "up" ? "up" : c.trend === "down" ? "down" : ""}">${esc(c.value)}</div>
       </div>
     `).join("");
 
     renderSparkline(qs("#call-perf-chart"), perf.series.map((s) => ({ x: s.date, y: s.cumulative_pct })));
 
     renderList(qs("#dash-notifications"), notif.notifications, (n) => `
-      <div class="kv-row"><span class="k">${n.message}</span><span class="v" style="color:var(--text-low);font-weight:400;font-size:10.5px">${fmtDateTime(n.created_at)}</span></div>
+      <div class="kv-row"><span class="k">${esc(n.message)}</span><span class="v" style="color:var(--text-low);font-weight:400;font-size:10.5px">${fmtDateTime(n.created_at)}</span></div>
     `, "No notifications.");
 
     qs("#notif-list").innerHTML = notif.notifications.map((n) => `
-      <div class="notif-item"><span class="notif-dot ${n.level}"></span><span>${n.message}</span></div>
+      <div class="notif-item"><span class="notif-dot ${esc(n.level)}"></span><span>${esc(n.message)}</span></div>
     `).join("") || `<div class="notif-item">No notifications.</div>`;
     qs("#bell-dot").style.display = notif.notifications.length ? "block" : "none";
 
@@ -270,9 +270,9 @@ async function loadDashboard() {
       <table class="data-table"><tbody>
         ${updates.updates.map((u) => `
           <tr>
-            <td><span class="badge ${u.type === "call" ? "ACTIVE" : u.type === "news" ? "info" : "DONE"}">${u.type}</span></td>
-            <td>${u.title}</td>
-            <td style="color:var(--text-low)">${u.meta}</td>
+            <td><span class="badge ${u.type === "call" ? "ACTIVE" : u.type === "news" ? "info" : "DONE"}">${esc(u.type)}</span></td>
+            <td>${esc(u.title)}</td>
+            <td style="color:var(--text-low)">${esc(u.meta)}</td>
             <td style="color:var(--text-low)">${fmtDateTime(u.timestamp)}</td>
           </tr>`).join("") || `<tr><td class="empty-state">No recent activity.</td></tr>`}
       </tbody></table>`;
@@ -292,12 +292,12 @@ async function loadMarket() {
 
     renderRows(qs("#watchlist-body"), watchlist, (w) => `
       <tr>
-        <td class="mono">${w.symbol}</td>
-        <td>${w.sector}</td>
+        <td class="mono">${esc(w.symbol)}</td>
+        <td>${esc(w.sector)}</td>
         <td class="mono">${fmtNum(w.last_price)}</td>
         <td class="mono ${signClass(w.day_change_pct)}">${fmtPct(w.day_change_pct)}</td>
-        <td style="color:var(--text-low)">${w.added_by || "—"}</td>
-        ${isFirm ? `<td><button class="icon-btn" data-del-watch="${w.id}">Remove</button></td>` : ""}
+        <td style="color:var(--text-low)">${esc(w.added_by || "—")}</td>
+        ${isFirm ? `<td><button class="icon-btn" data-del-watch="${Number(w.id)}">Remove</button></td>` : ""}
       </tr>
     `, { colspan: 6, emptyMessage: "Watchlist is empty." });
 
@@ -308,17 +308,17 @@ async function loadMarket() {
 
     renderRows(qs("#calls-body"), calls, (c) => `
       <tr>
-        <td class="mono">${c.symbol}</td>
-        <td>${c.sector}</td>
-        <td>${c.direction}</td>
+        <td class="mono">${esc(c.symbol)}</td>
+        <td>${esc(c.sector)}</td>
+        <td>${esc(c.direction)}</td>
         <td class="mono">${fmtNum(c.entry)}</td>
         <td class="mono">${fmtNum(c.stop_loss)}</td>
         <td class="mono">${fmtNum(c.target)}</td>
-        <td><span class="badge ${c.status}">${humanize(c.status)}</span></td>
+        <td><span class="badge ${esc(c.status)}">${esc(humanize(c.status))}</span></td>
         <td class="mono ${signClass(c.result_pct)}">${fmtPct(c.result_pct)}</td>
-        <td style="max-width:180px;white-space:normal;color:var(--text-low)">${c.notes || "—"}</td>
+        <td style="max-width:180px;white-space:normal;color:var(--text-low)">${esc(c.notes || "—")}</td>
         ${isFirm ? `<td>
-          <select data-call-status="${c.id}" style="background:var(--bg-input);border:1px solid var(--border);border-radius:5px;font-size:10.5px;padding:4px;">
+          <select data-call-status="${Number(c.id)}" style="background:var(--bg-input);border:1px solid var(--border);border-radius:5px;font-size:10.5px;padding:4px;">
             ${selectOptions(CALL_STATUSES, c.status)}
           </select>
         </td>` : ""}
@@ -397,11 +397,11 @@ async function loadNews(category) {
     renderList(qs("#news-list"), items, (n) => `
       <div class="card news-card">
         <div class="news-card-head">
-          <h3 class="news-title">${n.title}</h3>
-          <span class="badge ${n.category === "FIRM" ? "success" : n.category === "COMPANY" ? "warning" : "info"}">${n.category}</span>
+          <h3 class="news-title">${esc(n.title)}</h3>
+          <span class="badge ${n.category === "FIRM" ? "success" : n.category === "COMPANY" ? "warning" : "info"}">${esc(n.category)}</span>
         </div>
-        <p class="news-meta">${n.source} · ${fmtDateTime(n.published_at)}</p>
-        <p class="news-body">${n.body}</p>
+        <p class="news-meta">${esc(n.source)} · ${fmtDateTime(n.published_at)}</p>
+        <p class="news-body">${esc(n.body)}</p>
       </div>
     `, "No news in this category yet.");
   });
@@ -483,11 +483,11 @@ async function loadClients() {
     const clients = await apiGet("/clients");
     renderRows(qs("#clients-body"), clients, (c) => `
       <tr>
-        <td>${c.name}</td>
-        <td style="color:var(--text-low)">${c.email}</td>
-        <td><span class="client-tier-tag ${c.tier}">${c.tier}</span></td>
-        <td><span class="badge ${c.status}">${c.status}</span></td>
-        <td>${c.assigned_analyst || "—"}</td>
+        <td>${esc(c.name)}</td>
+        <td style="color:var(--text-low)">${esc(c.email)}</td>
+        <td><span class="client-tier-tag ${esc(c.tier)}">${esc(c.tier)}</span></td>
+        <td><span class="badge ${esc(c.status)}">${esc(c.status)}</span></td>
+        <td>${esc(c.assigned_analyst || "—")}</td>
         <td class="mono">${fmtINR(c.aum)}</td>
         <td style="color:var(--text-low)">${fmtDate(c.joined_at)}</td>
       </tr>
@@ -533,9 +533,9 @@ async function loadResearch() {
     const notes = await apiGet("/research-notes");
     renderList(qs("#notes-list"), notes, (n) => `
       <div class="card">
-        <div class="news-card-head"><h3 class="news-title">${n.title}</h3><span class="mono" style="font-size:10.5px;color:var(--text-low)">${fmtDate(n.created_at)}</span></div>
-        <p class="news-body">${n.body}</p>
-        <p style="font-size:10.5px;color:var(--text-low);margin-top:8px;">By ${n.created_by}${n.client_id ? ` · Client #${n.client_id}` : ""}${n.call_id ? ` · Call #${n.call_id}` : ""}</p>
+        <div class="news-card-head"><h3 class="news-title">${esc(n.title)}</h3><span class="mono" style="font-size:10.5px;color:var(--text-low)">${fmtDate(n.created_at)}</span></div>
+        <p class="news-body">${esc(n.body)}</p>
+        <p style="font-size:10.5px;color:var(--text-low);margin-top:8px;">By ${esc(n.created_by)}${n.client_id ? ` · Client #${Number(n.client_id)}` : ""}${n.call_id ? ` · Call #${Number(n.call_id)}` : ""}</p>
       </div>
     `, "No research notes yet.");
   });
@@ -545,7 +545,7 @@ async function loadResearch() {
     if (isFirmRole(session.user.role)) {
       try {
         const clients = await apiGet("/clients");
-        clientOptions += clients.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+        clientOptions += clients.map((c) => `<option value="${Number(c.id)}">${esc(c.name)}</option>`).join("");
       } catch { /* ignore */ }
     }
     openModal(`
@@ -578,10 +578,10 @@ async function loadTasks() {
     TASK_STATUSES.forEach((status) => {
       renderList(qs(`#task-col-${status}`), tasks.filter((t) => t.status === status), (t) => `
         <div class="task-card">
-          <div class="task-card-title">${t.title}</div>
-          <div class="task-card-meta"><span class="badge ${t.priority}">${t.priority}</span><span>${t.assigned_to || "Unassigned"}</span></div>
+          <div class="task-card-title">${esc(t.title)}</div>
+          <div class="task-card-meta"><span class="badge ${esc(t.priority)}">${esc(t.priority)}</span><span>${esc(t.assigned_to || "Unassigned")}</span></div>
           ${t.due_date ? `<div style="font-size:10px;color:var(--text-low);margin-top:6px;">Due ${fmtDate(t.due_date)}</div>` : ""}
-          <select data-task-status="${t.id}">
+          <select data-task-status="${Number(t.id)}">
             ${selectOptions(TASK_STATUSES, t.status)}
           </select>
         </div>
@@ -628,10 +628,10 @@ async function loadDocuments() {
     const docs = await apiGet("/documents");
     renderRows(qs("#documents-body"), docs, (d) => `
       <tr>
-        <td>▥ ${d.filename}</td>
-        <td><span class="badge info">${d.category}</span></td>
+        <td>▥ ${esc(d.filename)}</td>
+        <td><span class="badge info">${esc(d.category)}</span></td>
         <td class="mono">${fmtNum(d.size_kb, 0)} KB</td>
-        <td style="color:var(--text-low)">${d.uploaded_by}</td>
+        <td style="color:var(--text-low)">${esc(d.uploaded_by)}</td>
         <td style="color:var(--text-low)">${fmtDate(d.uploaded_at)}</td>
       </tr>
     `, { colspan: 5, emptyMessage: "No documents yet." });

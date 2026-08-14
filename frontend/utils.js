@@ -1,11 +1,15 @@
 /* ==========================================================================
    DV FINANCE PLATFORM — utils.js
-   DOM lookup, formatting, list/table rendering and the lightweight charts.
+   DOM lookup, escaping, formatting, list/table rendering and the charts.
    Pure helpers only: no app state, no API calls. Loaded before app.js.
    ========================================================================== */
 
 const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" };
+/* Escape every server-supplied value before it goes into an innerHTML template. */
+const esc = (value) => String(value ?? "").replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);
 
 const fmtINR = (n) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0);
 const fmtNum = (n, d = 2) => Number(n ?? 0).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d });
@@ -58,7 +62,7 @@ function renderBarChart(container, items, { labelKey = "label", valueKey = "valu
       <div class="bar-col">
         <span class="bar-value">${fmtNum(val, 1)}</span>
         <div class="bar-fill ${val < 0 ? "neg" : ""}" style="height:${heightPct}%"></div>
-        <span class="bar-label">${i[labelKey]}</span>
+        <span class="bar-label">${esc(i[labelKey])}</span>
       </div>`;
   }).join("")}</div>`;
 }
@@ -71,7 +75,7 @@ function renderHBarChart(container, items, { labelKey = "label", valueKey = "val
     const widthPct = Math.max((Math.abs(val) / max) * 100, 1.5);
     return `
       <div class="hbar-row">
-        <span>${i[labelKey]}</span>
+        <span>${esc(i[labelKey])}</span>
         <div class="hbar-track"><div class="hbar-fill ${val < 0 ? "neg" : ""}" style="width:${widthPct}%"></div></div>
         <span class="mono">${fmtNum(val, 1)}</span>
       </div>`;

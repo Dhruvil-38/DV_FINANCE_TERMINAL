@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 import models
@@ -84,7 +84,7 @@ def sector_performance(db: Session = Depends(get_db), user: models.User = Depend
 
 
 @router.get("/call-history")
-def call_history(limit: int = 50, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def call_history(limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     df = calls_dataframe(db)
     if df.empty:
         return {"history": []}

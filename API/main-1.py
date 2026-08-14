@@ -9,6 +9,8 @@ Run:
     uvicorn main:app --reload --port 8000
 """
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,19 +21,35 @@ from routers import (
     documents_router, reports_router,
 )
 
+DEFAULT_ALLOWED_ORIGINS = "http://localhost:5500,http://127.0.0.1:5500"
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("DV_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS).split(",")
+    if origin.strip()
+]
+if "*" in ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "DV_ALLOWED_ORIGINS must list explicit frontend origins; '*' would let any "
+        "site issue credentialed cross-origin requests."
+    )
+
+EXPOSE_DOCS = os.environ.get("DV_EXPOSE_DOCS", "").lower() in ("1", "true", "yes")
+
 app = FastAPI(
     title="DV Finance Platform API",
     description="Backend for the DV Finance client & firm portal.",
     version="1.0.0",
+    docs_url="/docs" if EXPOSE_DOCS else None,
+    redoc_url="/redoc" if EXPOSE_DOCS else None,
+    openapi_url="/openapi.json" if EXPOSE_DOCS else None,
 )
 
-# Tighten allow_origins to your actual frontend origin(s) before production deploy.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
