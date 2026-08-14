@@ -1,18 +1,34 @@
 """
 Creates all tables and seeds demo data (idempotent — skips if users already exist).
 Run automatically on API startup; can also run standalone: `python seed.py`.
+
+The demo accounts have publicly documented passwords, so seeding only happens on
+the default local SQLite database. Point DATABASE_URL at a real database (or set
+DV_SEED_DEMO_DATA=0) and no demo users are created; set DV_SEED_DEMO_DATA=1 to
+force it.
 """
 
+import os
 from datetime import datetime, timedelta
 import random
 
-from database import Base, engine, SessionLocal
+from database import Base, engine, SessionLocal, DATABASE_URL, DEFAULT_DATABASE_URL
 import models
 from auth import hash_password
 
 
+def demo_seeding_enabled() -> bool:
+    flag = os.environ.get("DV_SEED_DEMO_DATA")
+    if flag is not None:
+        return flag.lower() in ("1", "true", "yes")
+    return DATABASE_URL == DEFAULT_DATABASE_URL
+
+
 def run():
     Base.metadata.create_all(bind=engine)
+    if not demo_seeding_enabled():
+        print("Skipping demo seed data (non-default DATABASE_URL or DV_SEED_DEMO_DATA=0).")
+        return
     db = SessionLocal()
     try:
         if db.query(models.User).count() > 0:
