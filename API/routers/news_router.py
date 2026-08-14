@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 import models
@@ -11,14 +11,14 @@ router = APIRouter(prefix="/api/news", tags=["news"])
 
 @router.get("", response_model=list[schemas.NewsOut])
 def list_news(
-    category: str | None = None,
-    limit: int = 30,
+    category: schemas.NewsCategory | None = None,
+    limit: int = Query(30, ge=1, le=200),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
     q = db.query(models.NewsItem)
     if category:
-        q = q.filter(models.NewsItem.category == category.upper())
+        q = q.filter(models.NewsItem.category == category)
     return q.order_by(models.NewsItem.published_at.desc()).limit(limit).all()
 
 

@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session, sessionmaker, declarative_base
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./dv_platform.db")
+DEFAULT_DATABASE_URL = "sqlite:///./dv_platform.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)

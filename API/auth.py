@@ -5,13 +5,16 @@ Authentication & authorization.
 - Stateless auth via short-lived JWT access tokens (python-jose).
 - Role-based guards: require_role(...) as a FastAPI dependency.
 
-In production: move SECRET_KEY to an environment variable / secrets manager,
-put this behind HTTPS only, and add refresh-token rotation + rate limiting
-on the login endpoint.
+The signing secret is read from DV_JWT_SECRET and never falls back to a
+checked-in default — an unset secret raises at import time so a deployment
+cannot silently run with forgeable tokens. For local development, set
+DV_ALLOW_EPHEMERAL_JWT_SECRET=1 to generate a random per-process secret
+(tokens then stop working across restarts, which is the intended signal).
 """
 
 import logging
 import os
+import secrets
 from datetime import datetime, timedelta
 from typing import Iterable
 
@@ -26,7 +29,27 @@ import models
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.environ.get("DV_JWT_SECRET", "dev-secret-change-this-in-production-6f9a2c")
+MIN_SECRET_LENGTH = 32
+
+
+def _load_secret_key() -> str:
+    secret = os.environ.get("DV_JWT_SECRET", "").strip()
+    if secret:
+        if len(secret) < MIN_SECRET_LENGTH:
+            raise RuntimeError(
+                f"DV_JWT_SECRET must be at least {MIN_SECRET_LENGTH} characters long."
+            )
+        return secret
+    if os.environ.get("DV_ALLOW_EPHEMERAL_JWT_SECRET", "").lower() in ("1", "true", "yes"):
+        return secrets.token_urlsafe(48)
+    raise RuntimeError(
+        "DV_JWT_SECRET is not set. Generate one with "
+        "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"` and export it, "
+        "or set DV_ALLOW_EPHEMERAL_JWT_SECRET=1 for a throwaway local run."
+    )
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
 
@@ -66,12 +89,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception from exc
 
     try:
-        user_pk = int(payload["sub"])
+        user_id = int(payload["sub"])
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning("Token carries an unusable 'sub' claim: %r", payload.get("sub"))
         raise credentials_exception from exc
 
-    user = db.query(models.User).filter(models.User.id == user_pk).first()
+    user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None or not user.is_active:
         raise credentials_exception
     return user

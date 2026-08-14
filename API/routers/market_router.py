@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 import models
@@ -51,8 +51,8 @@ def delete_watchlist(
 
 @router.get("/calls", response_model=list[schemas.TradeCallOut])
 def list_calls(
-    status_filter: str | None = None,
-    sector: str | None = None,
+    status_filter: schemas.CallStatus | None = None,
+    sector: str | None = Query(None, max_length=64),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
@@ -70,8 +70,6 @@ def create_call(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("admin", "analyst")),
 ):
-    if call.direction not in ("LONG", "SHORT"):
-        raise HTTPException(status_code=400, detail="direction must be LONG or SHORT")
     row = models.TradeCall(**call.model_dump(), created_by=user.name)
     db.add(row)
     commit_session(db, conflict_detail="Could not create this trade call")

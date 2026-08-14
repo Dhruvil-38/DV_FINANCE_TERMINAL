@@ -1,14 +1,25 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
+
+Direction = Literal["LONG", "SHORT"]
+CallStatus = Literal["ACTIVE", "TARGET_HIT", "SL_HIT", "CLOSED", "CANCELLED"]
+NewsCategory = Literal["MARKET", "COMPANY", "FIRM"]
+ClientTier = Literal["Standard", "Premium", "Institutional"]
+ClientStatus = Literal["Active", "Onboarding", "Dormant"]
+TaskStatus = Literal["TODO", "IN_PROGRESS", "DONE"]
+TaskPriority = Literal["LOW", "MEDIUM", "HIGH"]
+DocumentCategory = Literal["Research", "Compliance", "Client", "General"]
+
+MAX_BODY_LENGTH = 20_000
 
 
 # ---------- Auth ----------
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=200)
 
 
 class TokenResponse(BaseModel):
@@ -31,13 +42,13 @@ class MeResponse(BaseModel):
 # ---------- Clients ----------
 
 class ClientBase(BaseModel):
-    name: str
-    email: str
-    phone: Optional[str] = None
-    tier: str = "Standard"
-    status: str = "Active"
-    assigned_analyst: Optional[str] = None
-    aum: float = 0.0
+    name: str = Field(max_length=200)
+    email: EmailStr
+    phone: Optional[str] = Field(default=None, max_length=32)
+    tier: ClientTier = "Standard"
+    status: ClientStatus = "Active"
+    assigned_analyst: Optional[str] = Field(default=None, max_length=200)
+    aum: float = Field(default=0.0, ge=0)
 
 
 class ClientCreate(ClientBase):
@@ -53,13 +64,13 @@ class ClientOut(ClientBase):
 # ---------- Trade calls ----------
 
 class TradeCallBase(BaseModel):
-    symbol: str
-    sector: str = "Unclassified"
-    direction: str  # LONG | SHORT
-    entry: float
-    stop_loss: float
-    target: float
-    notes: str = ""
+    symbol: str = Field(max_length=32)
+    sector: str = Field(default="Unclassified", max_length=64)
+    direction: Direction
+    entry: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    target: float = Field(gt=0)
+    notes: str = Field(default="", max_length=MAX_BODY_LENGTH)
 
 
 class TradeCallCreate(TradeCallBase):
@@ -67,15 +78,15 @@ class TradeCallCreate(TradeCallBase):
 
 
 class TradeCallUpdate(BaseModel):
-    status: Optional[str] = None
-    notes: Optional[str] = None
+    status: Optional[CallStatus] = None
+    notes: Optional[str] = Field(default=None, max_length=MAX_BODY_LENGTH)
     result_pct: Optional[float] = None
 
 
 class TradeCallOut(TradeCallBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    status: str
+    status: CallStatus
     result_pct: Optional[float]
     created_by: str
     created_at: datetime
@@ -85,9 +96,9 @@ class TradeCallOut(TradeCallBase):
 # ---------- Watchlist ----------
 
 class WatchlistCreate(BaseModel):
-    symbol: str
-    sector: str = "Unclassified"
-    last_price: float = 0.0
+    symbol: str = Field(max_length=32)
+    sector: str = Field(default="Unclassified", max_length=64)
+    last_price: float = Field(default=0.0, ge=0)
     day_change_pct: float = 0.0
 
 
@@ -101,10 +112,10 @@ class WatchlistOut(WatchlistCreate):
 # ---------- News ----------
 
 class NewsCreate(BaseModel):
-    category: str  # MARKET | COMPANY | FIRM
-    title: str
-    body: str = ""
-    source: str = "DV Finance Desk"
+    category: NewsCategory
+    title: str = Field(max_length=200)
+    body: str = Field(default="", max_length=MAX_BODY_LENGTH)
+    source: str = Field(default="DV Finance Desk", max_length=120)
 
 
 class NewsOut(NewsCreate):
@@ -117,10 +128,10 @@ class NewsOut(NewsCreate):
 # ---------- Research notes ----------
 
 class ResearchNoteCreate(BaseModel):
-    title: str
-    body: str = ""
-    client_id: Optional[int] = None
-    call_id: Optional[int] = None
+    title: str = Field(max_length=200)
+    body: str = Field(default="", max_length=MAX_BODY_LENGTH)
+    client_id: Optional[int] = Field(default=None, ge=1)
+    call_id: Optional[int] = Field(default=None, ge=1)
 
 
 class ResearchNoteOut(ResearchNoteCreate):
@@ -133,18 +144,18 @@ class ResearchNoteOut(ResearchNoteCreate):
 # ---------- Tasks ----------
 
 class TaskCreate(BaseModel):
-    title: str
-    description: str = ""
-    status: str = "TODO"
-    priority: str = "MEDIUM"
-    assigned_to: Optional[str] = None
+    title: str = Field(max_length=200)
+    description: str = Field(default="", max_length=MAX_BODY_LENGTH)
+    status: TaskStatus = "TODO"
+    priority: TaskPriority = "MEDIUM"
+    assigned_to: Optional[str] = Field(default=None, max_length=200)
     due_date: Optional[datetime] = None
 
 
 class TaskUpdate(BaseModel):
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    assigned_to: Optional[str] = None
+    status: Optional[TaskStatus] = None
+    priority: Optional[TaskPriority] = None
+    assigned_to: Optional[str] = Field(default=None, max_length=200)
     due_date: Optional[datetime] = None
 
 
@@ -157,10 +168,10 @@ class TaskOut(TaskCreate):
 # ---------- Documents ----------
 
 class DocumentCreate(BaseModel):
-    filename: str
-    category: str = "General"
-    size_kb: float = 0.0
-    client_id: Optional[int] = None
+    filename: str = Field(max_length=200)
+    category: DocumentCategory = "General"
+    size_kb: float = Field(default=0.0, ge=0)
+    client_id: Optional[int] = Field(default=None, ge=1)
 
 
 class DocumentOut(DocumentCreate):

@@ -18,6 +18,17 @@ REPORT_COLUMNS = {
     "performance": ["symbol", "sector", "status", "result_pct", "closed_at"],
 }
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _defuse_formulas(df: pd.DataFrame) -> pd.DataFrame:
+    """Neutralise spreadsheet formula injection in exported text columns."""
+    for column in df.select_dtypes(include="object").columns:
+        df[column] = df[column].map(
+            lambda v: f"'{v}" if isinstance(v, str) and v.startswith(_FORMULA_PREFIXES) else v
+        )
+    return df
+
 
 @router.get("/export")
 def export_report(
@@ -59,7 +70,7 @@ def export_report(
     df = pd.DataFrame(records, columns=REPORT_COLUMNS[type])
 
     buffer = io.StringIO()
-    df.to_csv(buffer, index=False)
+    _defuse_formulas(df).to_csv(buffer, index=False)
     buffer.seek(0)
 
     return StreamingResponse(
