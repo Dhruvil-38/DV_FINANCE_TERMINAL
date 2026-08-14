@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from database import get_db
+from database import get_db, commit_session
 from auth import get_current_user, require_role, FIRM_ROLES
 
 router = APIRouter(prefix="/api/news", tags=["news"])
@@ -30,6 +30,6 @@ def create_news(
 ):
     row = models.NewsItem(**item.model_dump(), created_by=user.name)
     db.add(row)
-    db.commit()
+    commit_session(db, conflict_detail="Could not publish this update")
     db.refresh(row)
     return row

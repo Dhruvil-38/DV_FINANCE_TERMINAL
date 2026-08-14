@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import secrets
@@ -8,8 +9,10 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from database import get_db
+from database import get_db, commit_session
 from auth import get_current_user, require_role, FIRM_ROLES
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -52,7 +55,7 @@ def register_document(
     """Registers document metadata without a physical file — use /upload for real bytes."""
     row = models.Document(**doc.model_dump(), uploaded_by=user.name)
     db.add(row)
-    db.commit()
+    commit_session(db, conflict_detail="Could not register this document")
     db.refresh(row)
     return row
 
@@ -91,16 +94,35 @@ def upload_document(
                         detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
                     )
                 out.write(chunk)
+    except OSError as exc:
+        # A half-written file on disk with no database row is worse than a clear error.
+        _discard(dest_path)
+        logger.exception("Storing upload %r failed", filename)
+        raise HTTPException(status_code=500, detail="Could not store the uploaded file") from exc
     except Exception:
-        if os.path.exists(dest_path):
-            os.remove(dest_path)
+        _discard(dest_path)
         raise
+    finally:
+        file.file.close()
 
     row = models.Document(
         filename=filename, category=category, size_kb=round(written / 1024, 1),
         uploaded_by=user.name, client_id=client_id,
     )
     db.add(row)
-    db.commit()
+    try:
+        commit_session(db, conflict_detail="Could not record this document — check the linked client")
+    except HTTPException:
+        _discard(dest_path)
+        raise
     db.refresh(row)
     return row
+
+
+def _discard(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("Could not clean up partial upload at %s", path, exc_info=True)

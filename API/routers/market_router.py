@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from database import get_db
+from database import get_db, commit_session
 from auth import get_current_user, require_role, FIRM_ROLES
 
 router = APIRouter(prefix="/api/market", tags=["market"])
+
+CALL_STATUSES = ("ACTIVE", "TARGET_HIT", "SL_HIT", "CLOSED", "CANCELLED")
 
 
 # ---------------- Watchlist ----------------
@@ -26,7 +28,7 @@ def add_watchlist(
 ):
     row = models.WatchlistItem(**item.model_dump(), added_by=user.name)
     db.add(row)
-    db.commit()
+    commit_session(db, conflict_detail="Could not add this watchlist item")
     db.refresh(row)
     return row
 
@@ -41,7 +43,7 @@ def delete_watchlist(
     if not row:
         raise HTTPException(status_code=404, detail="Watchlist item not found")
     db.delete(row)
-    db.commit()
+    commit_session(db, conflict_detail="Could not remove this watchlist item")
     return {"deleted": item_id}
 
 
@@ -70,7 +72,7 @@ def create_call(
 ):
     row = models.TradeCall(**call.model_dump(), created_by=user.name)
     db.add(row)
-    db.commit()
+    commit_session(db, conflict_detail="Could not create this trade call")
     db.refresh(row)
     return row
 
@@ -86,6 +88,9 @@ def update_call(
     if not row:
         raise HTTPException(status_code=404, detail="Trade call not found")
 
+    if payload.status is not None and payload.status not in CALL_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(CALL_STATUSES)}")
+
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(row, field, value)
@@ -93,6 +98,6 @@ def update_call(
     if payload.status in ("TARGET_HIT", "SL_HIT", "CLOSED"):
         row.closed_at = datetime.utcnow()
 
-    db.commit()
+    commit_session(db, conflict_detail="Could not update this trade call")
     db.refresh(row)
     return row

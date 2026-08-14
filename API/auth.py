@@ -12,6 +12,7 @@ DV_ALLOW_EPHEMERAL_JWT_SECRET=1 to generate a random per-process secret
 (tokens then stop working across restarts, which is the intended signal).
 """
 
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 import models
+
+logger = logging.getLogger(__name__)
 
 MIN_SECRET_LENGTH = 32
 
@@ -58,7 +61,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        # A stored hash that bcrypt cannot parse is a data problem, not a 500.
+        logger.error("Stored password hash is not a valid bcrypt hash", exc_info=True)
+        return False
 
 
 def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
@@ -76,9 +84,15 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        logger.info("Rejected token: %s", exc)
+        raise credentials_exception from exc
+
+    try:
         user_id = int(payload["sub"])
-    except (JWTError, KeyError, TypeError, ValueError):
-        raise credentials_exception
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("Token carries an unusable 'sub' claim: %r", payload.get("sub"))
+        raise credentials_exception from exc
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None or not user.is_active:

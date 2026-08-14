@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 import numpy as np
@@ -9,6 +10,8 @@ import models
 from database import get_db
 from auth import get_current_user, require_role, FIRM_ROLES
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
@@ -19,12 +22,21 @@ def _calls_dataframe(db: Session) -> pd.DataFrame:
             "id", "symbol", "sector", "direction", "entry", "stop_loss", "target",
             "status", "result_pct", "created_at", "closed_at",
         ])
-    return pd.DataFrame([{
+    df = pd.DataFrame([{
         "id": r.id, "symbol": r.symbol, "sector": r.sector, "direction": r.direction,
         "entry": r.entry, "stop_loss": r.stop_loss, "target": r.target,
         "status": r.status, "result_pct": r.result_pct,
         "created_at": r.created_at, "closed_at": r.closed_at,
     } for r in rows])
+    # Without coercion these stay object-dtype whenever a column is all-null,
+    # and every later .dt access blows up as an unexplained 500.
+    for column in ("created_at", "closed_at"):
+        df[column] = pd.to_datetime(df[column], errors="coerce")
+    return df
+
+
+def _round_or_zero(value, digits: int = 2) -> float:
+    return round(float(value), digits) if pd.notna(value) else 0.0
 
 
 @router.get("/win-rate")
@@ -54,8 +66,10 @@ def accuracy(db: Session = Depends(get_db), user: models.User = Depends(get_curr
     return {
         "accuracy_pct": round(profitable / len(closed) * 100, 2),
         "sample_size": int(len(closed)),
-        "avg_result_pct": round(float(closed["result_pct"].mean()), 2),
-        "std_dev_pct": round(float(closed["result_pct"].std(ddof=0) or 0.0), 2),
+        # NaN is truthy, so `x or 0.0` does not filter it — and NaN serializes
+        # to invalid JSON that the browser rejects with no useful error.
+        "avg_result_pct": _round_or_zero(closed["result_pct"].mean()),
+        "std_dev_pct": _round_or_zero(closed["result_pct"].std(ddof=0)),
     }
 
 
@@ -65,7 +79,14 @@ def monthly_performance(db: Session = Depends(get_db), user: models.User = Depen
     closed = df[df["result_pct"].notna()].copy()
     if closed.empty:
         return {"months": []}
-    closed["month"] = closed["closed_at"].fillna(closed["created_at"]).dt.strftime("%Y-%m")
+    months = closed["closed_at"].fillna(closed["created_at"])
+    if months.isna().any():
+        logger.warning("%d closed calls have no usable date and are excluded", int(months.isna().sum()))
+        closed = closed[months.notna()]
+        months = months[months.notna()]
+        if closed.empty:
+            return {"months": []}
+    closed["month"] = months.dt.strftime("%Y-%m")
     grouped = closed.groupby("month").agg(
         avg_result_pct=("result_pct", "mean"),
         total_result_pct=("result_pct", "sum"),

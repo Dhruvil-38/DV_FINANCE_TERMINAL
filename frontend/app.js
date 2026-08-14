@@ -29,36 +29,84 @@ const session = {
   get token() { return localStorage.getItem("dv_token"); },
   set token(v) { v ? localStorage.setItem("dv_token", v) : localStorage.removeItem("dv_token"); },
   get user() {
-    try { return JSON.parse(localStorage.getItem("dv_user") || "null"); } catch { return null; }
+    const raw = localStorage.getItem("dv_user");
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error("Stored session user is unreadable — clearing it.", err);
+      localStorage.removeItem("dv_user");
+      return null;
+    }
   },
   set user(v) { v ? localStorage.setItem("dv_user", JSON.stringify(v)) : localStorage.removeItem("dv_user"); },
   clear() { this.token = null; this.user = null; },
 };
+
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/* FastAPI returns `detail` as a string for our own errors but as a list of
+   {loc, msg} objects for validation failures — the latter used to reach the
+   user as "[object Object]". */
+function describeDetail(detail, fallback) {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((d) => (Array.isArray(d?.loc) ? `${d.loc.slice(1).join(".")}: ${d.msg}` : d?.msg))
+      .filter(Boolean);
+    if (messages.length) return messages.join("; ");
+  }
+  return fallback;
+}
 
 async function apiRequest(path, { method = "GET", body, isForm = false } = {}) {
   const headers = {};
   if (session.token) headers["Authorization"] = `Bearer ${session.token}`;
   if (!isForm && body !== undefined) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: isForm ? body : (body !== undefined ? JSON.stringify(body) : undefined),
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: isForm ? body : (body !== undefined ? JSON.stringify(body) : undefined),
+    });
+  } catch (err) {
+    console.error(`Network failure on ${method} ${path}`, err);
+    throw new ApiError("Cannot reach the API — check your connection and that the server is running.", 0);
+  }
 
   if (res.status === 401) {
     logout();
-    throw new Error("Session expired — please sign in again.");
+    throw new ApiError("Session expired — please sign in again.", 401);
   }
 
   if (!res.ok) {
     let detail = `Request failed (${res.status})`;
-    try { detail = (await res.json()).detail || detail; } catch { /* noop */ }
-    throw new Error(detail);
+    try {
+      const payload = await res.json();
+      detail = describeDetail(payload?.detail, detail);
+    } catch (err) {
+      console.warn(`Error response of ${method} ${path} was not JSON`, err);
+    }
+    throw new ApiError(detail, res.status);
   }
 
   const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return res.json();
+  if (contentType.includes("application/json")) {
+    try {
+      return await res.json();
+    } catch (err) {
+      console.error(`Malformed JSON from ${method} ${path}`, err);
+      throw new ApiError("The server returned a malformed response.", res.status);
+    }
+  }
   return res.blob();
 }
 
@@ -98,7 +146,8 @@ function initLogin() {
       session.user = { id: data.user_id, name: data.name, role: data.role, client_id: data.client_id };
       enterApp();
     } catch (err) {
-      errEl.textContent = err.message || "Sign-in failed.";
+      console.error("Sign-in failed", err);
+      errEl.textContent = errorMessage(err, "Sign-in failed.");
       errEl.classList.add("is-visible");
     } finally {
       btn.disabled = false;
@@ -154,17 +203,36 @@ const loadedPanels = new Set();
 function switchPanel(name) {
   qsa(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.panel === name));
   qsa(".panel").forEach((p) => p.classList.toggle("is-active", p.dataset.panel === name));
-  if (!loadedPanels.has(name)) {
-    loadedPanels.add(name);
-    PANEL_LOADERS[name]?.();
+  if (!loadedPanels.has(name)) runPanelLoader(name);
+}
+
+/* Loaders reject on failure; a panel that failed must not stay marked as loaded,
+   otherwise revisiting it silently shows a stale/empty view forever. */
+function runPanelLoader(name) {
+  const loader = PANEL_LOADERS[name];
+  if (!loader) {
+    console.warn(`No loader registered for panel '${name}'`);
+    return;
   }
+  loadedPanels.add(name);
+  Promise.resolve()
+    .then(loader)
+    .catch((err) => {
+      loadedPanels.delete(name);
+      reportError(`Loading panel '${name}' failed`, err, "Could not load this section.");
+    });
+}
+
+function reloadPanel(name) {
+  loadedPanels.delete(name);
+  runPanelLoader(name);
 }
 
 function initNav() {
   qsa(".nav-item[data-panel]").forEach((btn) => btn.addEventListener("click", () => switchPanel(btn.dataset.panel)));
   qsa("[data-refresh]").forEach((btn) => btn.addEventListener("click", () => {
     loadedPanels.delete(btn.dataset.refresh);
-    PANEL_LOADERS[btn.dataset.refresh]?.();
+    runPanelLoader(btn.dataset.refresh);
   }));
   qs("#logout-btn").addEventListener("click", logout);
 
@@ -187,6 +255,41 @@ function toast(message, isError = false) {
   el.classList.add("is-visible");
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove("is-visible"), 3200);
+}
+
+/* ==========================================================================
+   ERROR SURFACING
+   ========================================================================== */
+
+function errorMessage(err, fallback = "Something went wrong.") {
+  const message = typeof err === "string" ? err : err?.message;
+  return message || fallback;
+}
+
+function reportError(context, err, fallback) {
+  console.error(context, err);
+  toast(errorMessage(err, fallback), true);
+}
+
+/* Renders the failure where the data should have been, so a failed panel is
+   never mistaken for an empty one after the toast disappears. */
+function showLoadError(container, err) {
+  if (!container) return;
+  const text = `Could not load this data — ${errorMessage(err)}`;
+  if (container.tagName === "TBODY") {
+    const cell = document.createElement("td");
+    cell.className = "empty-state";
+    cell.colSpan = 12;
+    cell.textContent = text;
+    const row = document.createElement("tr");
+    row.append(cell);
+    container.replaceChildren(row);
+    return;
+  }
+  const box = document.createElement("div");
+  box.className = "empty-state";
+  box.textContent = text;
+  container.replaceChildren(box);
 }
 
 /* ==========================================================================
@@ -305,7 +408,9 @@ async function loadDashboard() {
           </tr>`).join("") || `<tr><td class="empty-state">No recent activity.</td></tr>`}
       </tbody></table>`;
   } catch (err) {
-    toast(err.message, true);
+    showLoadError(qs("#summary-cards"), err);
+    showLoadError(qs("#recent-updates"), err);
+    throw err;
   }
 }
 
@@ -330,8 +435,8 @@ async function loadMarket() {
     `).join("") || `<tr><td colspan="6" class="empty-state">Watchlist is empty.</td></tr>`;
 
     qsa("[data-del-watch]").forEach((btn) => btn.addEventListener("click", async () => {
-      try { await apiDelete(`/market/watchlist/${btn.dataset.delWatch}`); toast("Removed from watchlist."); loadedPanels.delete("market"); loadMarket(); }
-      catch (err) { toast(err.message, true); }
+      try { await apiDelete(`/market/watchlist/${btn.dataset.delWatch}`); toast("Removed from watchlist."); reloadPanel("market"); }
+      catch (err) { reportError("Removing watchlist item failed", err, "Could not remove this item."); }
     }));
 
     qs("#calls-body").innerHTML = calls.map((c) => `
@@ -354,10 +459,21 @@ async function loadMarket() {
     `).join("") || `<tr><td colspan="10" class="empty-state">No trade calls yet.</td></tr>`;
 
     qsa("[data-call-status]").forEach((sel) => sel.addEventListener("change", async () => {
-      try { await apiPatch(`/market/calls/${sel.dataset.callStatus}`, { status: sel.value }); toast("Call status updated."); loadedPanels.delete("market"); loadMarket(); loadedPanels.delete("analytics"); }
-      catch (err) { toast(err.message, true); }
+      try {
+        await apiPatch(`/market/calls/${sel.dataset.callStatus}`, { status: sel.value });
+        toast("Call status updated.");
+        loadedPanels.delete("analytics");
+        reloadPanel("market");
+      } catch (err) {
+        reportError("Updating call status failed", err, "Could not update this call.");
+        reloadPanel("market");  // drop the optimistic <select> value
+      }
     }));
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    showLoadError(qs("#watchlist-body"), err);
+    showLoadError(qs("#calls-body"), err);
+    throw err;
+  }
 
   qs("#btn-add-watchlist")?.addEventListener("click", openAddWatchlistModal, { once: true });
   qs("#btn-add-call")?.addEventListener("click", openAddCallModal, { once: true });
@@ -383,8 +499,8 @@ function openAddWatchlistModal() {
           symbol: qs("#w-symbol").value.toUpperCase(), sector: qs("#w-sector").value,
           last_price: parseFloat(qs("#w-price").value), day_change_pct: parseFloat(qs("#w-change").value),
         });
-        toast("Added to watchlist."); closeModal(); loadedPanels.delete("market"); loadMarket();
-      } catch (err) { toast(err.message, true); }
+        toast("Added to watchlist."); closeModal(); reloadPanel("market");
+      } catch (err) { reportError("Adding watchlist item failed", err, "Could not add this item."); }
     });
   });
 }
@@ -418,8 +534,8 @@ function openAddCallModal() {
           stop_loss: parseFloat(qs("#c-sl").value), target: parseFloat(qs("#c-target").value),
           notes: qs("#c-notes").value,
         });
-        toast("Trade call created."); closeModal(); loadedPanels.delete("market"); loadMarket();
-      } catch (err) { toast(err.message, true); }
+        toast("Trade call created."); closeModal(); reloadPanel("market");
+      } catch (err) { reportError("Creating trade call failed", err, "Could not create this call."); }
     });
   });
 }
@@ -442,10 +558,15 @@ async function loadNews(category) {
         <p class="news-body">${esc(n.body)}</p>
       </div>
     `).join("") || `<div class="empty-state">No news in this category yet.</div>`;
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    showLoadError(qs("#news-list"), err);
+    throw err;
+  }
 
   qsa("#news-tabs .tab-btn").forEach((b) => {
-    b.onclick = () => loadNews(b.dataset.cat);
+    b.onclick = () => loadNews(b.dataset.cat).catch((err) => {
+      reportError(`Loading '${b.dataset.cat || "all"}' news failed`, err, "Could not load news.");
+    });
   });
   qs("#btn-add-news")?.addEventListener("click", openAddNewsModal, { once: true });
 }
@@ -467,8 +588,8 @@ function openAddNewsModal() {
       e.preventDefault();
       try {
         await apiPost("/news", { category: qs("#n-category").value, title: qs("#n-title").value, body: qs("#n-body").value, source: qs("#n-source").value });
-        toast("Published."); closeModal(); loadNews("");
-      } catch (err) { toast(err.message, true); }
+        toast("Published."); closeModal(); reloadPanel("news");
+      } catch (err) { reportError("Publishing update failed", err, "Could not publish this update."); }
     });
   });
 }
@@ -504,7 +625,10 @@ async function loadAnalytics() {
     if (isFirm && engagement) {
       renderHBarChart(qs("#chart-engagement"), engagement.clients, { labelKey: "client_name", valueKey: "engagement_score" });
     }
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    ["#chart-monthly", "#chart-sector", "#chart-history"].forEach((sel) => showLoadError(qs(sel), err));
+    throw err;
+  }
 
   qsa("[data-export]").forEach((btn) => {
     btn.onclick = async () => {
@@ -514,7 +638,7 @@ async function loadAnalytics() {
         const a = document.createElement("a");
         a.href = url; a.download = `dvfinance_${btn.dataset.export}.csv`; a.click();
         URL.revokeObjectURL(url);
-      } catch (err) { toast(err.message, true); }
+      } catch (err) { reportError(`Exporting '${btn.dataset.export}' failed`, err, "Could not export this report."); }
     };
   });
 }
@@ -537,7 +661,10 @@ async function loadClients() {
         <td style="color:var(--text-low)">${fmtDate(c.joined_at)}</td>
       </tr>
     `).join("") || `<tr><td colspan="7" class="empty-state">No clients yet.</td></tr>`;
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    showLoadError(qs("#clients-body"), err);
+    throw err;
+  }
 
   qs("#btn-add-client")?.addEventListener("click", openAddClientModal, { once: true });
 }
@@ -568,8 +695,8 @@ function openAddClientModal() {
           name: qs("#cl-name").value, email: qs("#cl-email").value, phone: qs("#cl-phone").value,
           tier: qs("#cl-tier").value, assigned_analyst: qs("#cl-analyst").value, aum: parseFloat(qs("#cl-aum").value || 0),
         });
-        toast("Client added."); closeModal(); loadedPanels.delete("clients"); loadClients();
-      } catch (err) { toast(err.message, true); }
+        toast("Client added."); closeModal(); reloadPanel("clients");
+      } catch (err) { reportError("Adding client failed", err, "Could not add this client."); }
     });
   });
 }
@@ -588,7 +715,10 @@ async function loadResearch() {
         <p style="font-size:10.5px;color:var(--text-low);margin-top:8px;">By ${esc(n.created_by)}${n.client_id ? ` · Client #${Number(n.client_id)}` : ""}${n.call_id ? ` · Call #${Number(n.call_id)}` : ""}</p>
       </div>
     `).join("") || `<div class="empty-state">No research notes yet.</div>`;
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    showLoadError(qs("#notes-list"), err);
+    throw err;
+  }
 
   qs("#btn-add-note")?.addEventListener("click", async () => {
     let clientOptions = "<option value=''>— None —</option>";
@@ -596,7 +726,9 @@ async function loadResearch() {
       try {
         const clients = await apiGet("/clients");
         clientOptions += clients.map((c) => `<option value="${Number(c.id)}">${esc(c.name)}</option>`).join("");
-      } catch { /* ignore */ }
+      } catch (err) {
+        reportError("Loading clients for the note form failed", err, "Could not load the client list.");
+      }
     }
     openModal(`
       <div class="modal-head"><h3 class="modal-title">New Research Note</h3><button class="modal-close" data-modal-close>×</button></div>
@@ -614,8 +746,8 @@ async function loadResearch() {
             title: qs("#note-title").value, body: qs("#note-body").value,
             client_id: qs("#note-client").value ? parseInt(qs("#note-client").value) : null,
           });
-          toast("Note saved."); closeModal(); loadedPanels.delete("research"); loadResearch();
-        } catch (err) { toast(err.message, true); }
+          toast("Note saved."); closeModal(); reloadPanel("research");
+        } catch (err) { reportError("Saving note failed", err, "Could not save this note."); }
       });
     });
   }, { once: true });
@@ -644,10 +776,19 @@ async function loadTasks() {
     });
 
     qsa("[data-task-status]").forEach((sel) => sel.addEventListener("change", async () => {
-      try { await apiPatch(`/tasks/${sel.dataset.taskStatus}`, { status: sel.value }); toast("Task updated."); loadedPanels.delete("tasks"); loadTasks(); }
-      catch (err) { toast(err.message, true); }
+      try {
+        await apiPatch(`/tasks/${sel.dataset.taskStatus}`, { status: sel.value });
+        toast("Task updated.");
+      } catch (err) {
+        reportError("Updating task failed", err, "Could not update this task.");
+      } finally {
+        reloadPanel("tasks");  // on failure this also drops the optimistic <select> value
+      }
     }));
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    showLoadError(qs("#task-col-TODO"), err);
+    throw err;
+  }
 
   qs("#btn-add-task")?.addEventListener("click", openAddTaskModal, { once: true });
 }
@@ -673,8 +814,8 @@ function openAddTaskModal() {
           title: qs("#t-title").value, description: qs("#t-desc").value, priority: qs("#t-priority").value,
           assigned_to: qs("#t-assignee").value, due_date: qs("#t-due").value ? new Date(qs("#t-due").value).toISOString() : null,
         });
-        toast("Task created."); closeModal(); loadedPanels.delete("tasks"); loadTasks();
-      } catch (err) { toast(err.message, true); }
+        toast("Task created."); closeModal(); reloadPanel("tasks");
+      } catch (err) { reportError("Creating task failed", err, "Could not create this task."); }
     });
   });
 }
@@ -695,7 +836,10 @@ async function loadDocuments() {
         <td style="color:var(--text-low)">${fmtDate(d.uploaded_at)}</td>
       </tr>
     `).join("") || `<tr><td colspan="5" class="empty-state">No documents yet.</td></tr>`;
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    showLoadError(qs("#documents-body"), err);
+    throw err;
+  }
 
   qs("#btn-add-document")?.addEventListener("click", openAddDocumentModal, { once: true });
 }
@@ -714,14 +858,17 @@ function openAddDocumentModal() {
     qs("#doc-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const fileInput = qs("#doc-file");
-      if (!fileInput.files.length) return;
+      if (!fileInput.files.length) {
+        toast("Choose a file first.", true);
+        return;
+      }
       const form = new FormData();
       form.append("file", fileInput.files[0]);
       form.append("category", qs("#doc-category").value);
       try {
         await apiRequest("/documents/upload", { method: "POST", body: form, isForm: true });
-        toast("Document uploaded."); closeModal(); loadedPanels.delete("documents"); loadDocuments();
-      } catch (err) { toast(err.message, true); }
+        toast("Document uploaded."); closeModal(); reloadPanel("documents");
+      } catch (err) { reportError("Uploading document failed", err, "Could not upload this document."); }
     });
   });
 }
@@ -729,6 +876,15 @@ function openAddDocumentModal() {
 /* ==========================================================================
    INIT
    ========================================================================== */
+
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("Unhandled promise rejection", e.reason);
+  toast(errorMessage(e.reason), true);
+});
+
+window.addEventListener("error", (e) => {
+  console.error("Unhandled error", e.error || e.message);
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   initLogin();

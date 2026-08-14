@@ -1,6 +1,8 @@
 import csv
 import io
 
+from engagement import reports_router
+
 
 def _rows(response):
     return list(csv.DictReader(io.StringIO(response.text)))
@@ -68,13 +70,13 @@ def test_export_requires_type_parameter(client, as_role):
     assert client.get("/api/reports/export", headers=headers).status_code == 422
 
 
-def test_export_with_no_rows_returns_empty_csv(client, as_role):
+def test_export_with_no_rows_returns_header_only_csv(client, as_role):
     _, headers = as_role("admin")
 
     response = client.get("/api/reports/export?type=calls", headers=headers)
 
     assert response.status_code == 200
-    assert response.text.strip() == ""
+    assert response.text.splitlines() == [",".join(reports_router.REPORT_COLUMNS["calls"])]
 
 
 def test_export_requires_authentication(client):
