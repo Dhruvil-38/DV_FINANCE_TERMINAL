@@ -1,11 +1,11 @@
 from datetime import datetime
 
 import models
-from routers.analytics_router import _calls_dataframe
+from dataframes import calls_dataframe
 
 
 def test_calls_dataframe_empty_has_expected_columns(db):
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
 
     assert df.empty
     assert list(df.columns) == ["id", "symbol", "sector", "direction", "entry", "stop_loss",
@@ -15,7 +15,7 @@ def test_calls_dataframe_empty_has_expected_columns(db):
 def test_calls_dataframe_maps_rows(db, make_call):
     make_call(symbol="TCS", sector="Technology", status="TARGET_HIT", result_pct=4.0)
 
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
 
     assert len(df) == 1
     assert df.iloc[0]["symbol"] == "TCS"

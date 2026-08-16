@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+from crud import create_row
 from database import get_db
 from auth import get_current_user, require_role, FIRM_ROLES
 
@@ -28,8 +29,4 @@ def create_news(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role(*FIRM_ROLES)),
 ):
-    row = models.NewsItem(**item.model_dump(), created_by=user.name)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    return create_row(db, models.NewsItem, item, created_by=user.name)

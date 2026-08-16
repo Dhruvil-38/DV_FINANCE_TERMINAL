@@ -1,35 +1,19 @@
-from datetime import datetime
-
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 import models
+from dataframes import calls_dataframe
 from database import get_db
 from auth import get_current_user, require_role, FIRM_ROLES
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-def _calls_dataframe(db: Session) -> pd.DataFrame:
-    rows = db.query(models.TradeCall).all()
-    if not rows:
-        return pd.DataFrame(columns=[
-            "id", "symbol", "sector", "direction", "entry", "stop_loss", "target",
-            "status", "result_pct", "created_at", "closed_at",
-        ])
-    return pd.DataFrame([{
-        "id": r.id, "symbol": r.symbol, "sector": r.sector, "direction": r.direction,
-        "entry": r.entry, "stop_loss": r.stop_loss, "target": r.target,
-        "status": r.status, "result_pct": r.result_pct,
-        "created_at": r.created_at, "closed_at": r.closed_at,
-    } for r in rows])
-
-
 @router.get("/win-rate")
 def win_rate(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
     closed = df[df["status"].isin(["TARGET_HIT", "SL_HIT"])]
     if closed.empty:
         return {"win_rate_pct": 0.0, "wins": 0, "losses": 0, "total_closed": 0}
@@ -46,7 +30,7 @@ def win_rate(db: Session = Depends(get_db), user: models.User = Depends(get_curr
 @router.get("/accuracy")
 def accuracy(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Accuracy = share of closed calls that ended net-positive, regardless of exact SL/target tag."""
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
     closed = df[df["result_pct"].notna()]
     if closed.empty:
         return {"accuracy_pct": 0.0, "sample_size": 0, "avg_result_pct": 0.0, "std_dev_pct": 0.0}
@@ -61,7 +45,7 @@ def accuracy(db: Session = Depends(get_db), user: models.User = Depends(get_curr
 
 @router.get("/monthly-performance")
 def monthly_performance(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
     closed = df[df["result_pct"].notna()].copy()
     if closed.empty:
         return {"months": []}
@@ -77,7 +61,7 @@ def monthly_performance(db: Session = Depends(get_db), user: models.User = Depen
 
 @router.get("/sector-performance")
 def sector_performance(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
     if df.empty:
         return {"sectors": []}
     closed = df[df["result_pct"].notna()]
@@ -101,7 +85,7 @@ def sector_performance(db: Session = Depends(get_db), user: models.User = Depend
 
 @router.get("/call-history")
 def call_history(limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    df = _calls_dataframe(db)
+    df = calls_dataframe(db)
     if df.empty:
         return {"history": []}
     df = df.sort_values("created_at").tail(limit).copy()

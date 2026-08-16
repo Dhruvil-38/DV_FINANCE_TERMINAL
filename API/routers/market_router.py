@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+from crud import apply_fields, create_row, get_or_404, save
 from database import get_db
 from auth import get_current_user, require_role, FIRM_ROLES
 
@@ -24,11 +25,7 @@ def add_watchlist(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role(*FIRM_ROLES)),
 ):
-    row = models.WatchlistItem(**item.model_dump(), added_by=user.name)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    return create_row(db, models.WatchlistItem, item, added_by=user.name)
 
 
 @router.delete("/watchlist/{item_id}")
@@ -37,9 +34,7 @@ def delete_watchlist(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role(*FIRM_ROLES)),
 ):
-    row = db.query(models.WatchlistItem).filter(models.WatchlistItem.id == item_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Watchlist item not found")
+    row = get_or_404(db, models.WatchlistItem, item_id, "Watchlist item not found")
     db.delete(row)
     db.commit()
     return {"deleted": item_id}
@@ -68,11 +63,7 @@ def create_call(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("admin", "analyst")),
 ):
-    row = models.TradeCall(**call.model_dump(), created_by=user.name)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    return create_row(db, models.TradeCall, call, created_by=user.name)
 
 
 @router.patch("/calls/{call_id}", response_model=schemas.TradeCallOut)
@@ -82,17 +73,9 @@ def update_call(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("admin", "analyst")),
 ):
-    row = db.query(models.TradeCall).filter(models.TradeCall.id == call_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Trade call not found")
-
-    updates = payload.model_dump(exclude_unset=True)
-    for field, value in updates.items():
-        setattr(row, field, value)
+    row = apply_fields(get_or_404(db, models.TradeCall, call_id, "Trade call not found"), payload)
 
     if payload.status in ("TARGET_HIT", "SL_HIT", "CLOSED"):
         row.closed_at = datetime.utcnow()
 
-    db.commit()
-    db.refresh(row)
-    return row
+    return save(db, row)

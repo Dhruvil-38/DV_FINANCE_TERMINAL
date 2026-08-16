@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+from crud import create_row
 from database import get_db
 from auth import get_current_user, require_role, FIRM_ROLES
 
@@ -50,11 +51,7 @@ def register_document(
     user: models.User = Depends(require_role(*FIRM_ROLES)),
 ):
     """Registers document metadata without a physical file — use /upload for real bytes."""
-    row = models.Document(**doc.model_dump(), uploaded_by=user.name)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    return create_row(db, models.Document, doc, uploaded_by=user.name)
 
 
 @router.post("/upload", response_model=schemas.DocumentOut)
@@ -96,11 +93,8 @@ def upload_document(
             os.remove(dest_path)
         raise
 
-    row = models.Document(
+    return create_row(
+        db, models.Document,
         filename=filename, category=category, size_kb=round(written / 1024, 1),
         uploaded_by=user.name, client_id=client_id,
     )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row

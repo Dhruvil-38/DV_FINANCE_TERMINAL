@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+from crud import create_row, get_or_404, update_row
 from database import get_db
 from auth import require_role, FIRM_ROLES
 
@@ -16,10 +17,7 @@ def list_clients(db: Session = Depends(get_db), user: models.User = Depends(requ
 
 @router.get("/{client_id}", response_model=schemas.ClientOut)
 def get_client(client_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_role(*FIRM_ROLES))):
-    row = db.query(models.Client).filter(models.Client.id == client_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Client not found")
-    return row
+    return get_or_404(db, models.Client, client_id, "Client not found")
 
 
 @router.post("", response_model=schemas.ClientOut)
@@ -28,11 +26,7 @@ def create_client(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("admin", "analyst")),
 ):
-    row = models.Client(**client.model_dump())
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    return create_row(db, models.Client, client)
 
 
 @router.patch("/{client_id}", response_model=schemas.ClientOut)
@@ -42,11 +36,5 @@ def update_client(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("admin", "analyst")),
 ):
-    row = db.query(models.Client).filter(models.Client.id == client_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Client not found")
-    for field, value in payload.model_dump().items():
-        setattr(row, field, value)
-    db.commit()
-    db.refresh(row)
-    return row
+    row = get_or_404(db, models.Client, client_id, "Client not found")
+    return update_row(db, row, payload, exclude_unset=False)
